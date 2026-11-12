@@ -1,0 +1,74 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.uid == 'REPLACE_WITH_ADMIN_UID';
+    }
+
+    function validWish() {
+      return request.resource.data.keys().hasOnly([
+          'name', 'email', 'message', 'createdAt', 'approved'
+        ])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 100
+        && request.resource.data.email is string
+        && request.resource.data.email.size() <= 120
+        && request.resource.data.message is string
+        && request.resource.data.message.size() > 0
+        && request.resource.data.message.size() <= 1000
+        && request.resource.data.createdAt is string
+        && request.resource.data.approved is bool;
+    }
+
+    function canSetApproval() {
+      let configPath = /databases/$(database)/documents/site/config;
+      return exists(configPath)
+        && get(configPath).data.guestbook.moderation == false;
+    }
+
+    function validRsvp(phone) {
+      return request.resource.data.keys().hasOnly([
+          'name', 'phone', 'email', 'guests', 'side', 'ceremonies',
+          'status', 'message', 'createdAt'
+        ])
+        && request.resource.data.phone == phone
+        && request.resource.data.phone.matches('0[0-9]{9}')
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 100
+        && request.resource.data.email is string
+        && request.resource.data.email.size() <= 120
+        && request.resource.data.guests is int
+        && request.resource.data.guests >= 1
+        && request.resource.data.guests <= 20
+        && request.resource.data.side is string
+        && request.resource.data.ceremonies is string
+        && request.resource.data.status in ['yes', 'no', 'maybe']
+        && request.resource.data.message is string
+        && request.resource.data.message.size() <= 500
+        && request.resource.data.createdAt is string;
+    }
+
+    match /site/config {
+      allow read: if true;
+      allow create, update: if isAdmin();
+      allow delete: if false;
+    }
+
+    match /wishes/{wishId} {
+      allow get, list: if isAdmin() || resource.data.approved == true;
+      allow create: if validWish()
+        && (isAdmin() || request.resource.data.approved == canSetApproval());
+      allow update, delete: if isAdmin();
+    }
+
+    match /rsvps/{phone} {
+      allow get, list: if isAdmin();
+      allow create: if validRsvp(phone);
+      allow update, delete: if isAdmin();
+    }
+  }
+}

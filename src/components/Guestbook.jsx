@@ -20,15 +20,18 @@ function perViewForWidth() {
 
 export default function Guestbook({ cfg, showToast }) {
   const gb = cfg.guestbook || {};
-  const [wishes, setWishes] = useState(() =>
-    getWishes().filter((w) => w.approved === true),
-  );
+  const [wishes, setWishes] = useState([]);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [loadError, setLoadError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const submitTimerRef = useRef(null);
+
+  useEffect(() => {
+    reloadWishes();
+  }, []);
 
   // ---- Slider state ----
   const [page, setPage] = useState(0);
@@ -113,9 +116,15 @@ export default function Guestbook({ cfg, showToast }) {
     }, 50);
   };
 
-  const reloadWishes = () => {
-    setWishes(getWishes().filter((w) => w.approved === true));
-    setPage(0);
+  const reloadWishes = async () => {
+    try {
+      setWishes(await getWishes(true));
+      setLoadError('');
+      setPage(0);
+    } catch (err) {
+      console.error('[guestbook] Không tải được lời chúc:', err);
+      setLoadError('Không tải được lời chúc. Vui lòng thử tải lại trang.');
+    }
   };
 
   const handleSubmit = (e) => {
@@ -138,8 +147,8 @@ export default function Guestbook({ cfg, showToast }) {
     }
     setSubmitting(true);
     if (submitTimerRef.current) clearTimeout(submitTimerRef.current);
-    submitTimerRef.current = setTimeout(() => {
-      const result = addWish({
+    submitTimerRef.current = setTimeout(async () => {
+      const result = await addWish({
         name: cleanName,
         email: cleanEmail,
         message: cleanMessage,
@@ -153,7 +162,7 @@ export default function Guestbook({ cfg, showToast }) {
       setName('');
       setEmail('');
       setMessage('');
-      reloadWishes();
+      await reloadWishes();
       if (showToast) showToast(gb.thankYou || 'Cảm ơn bạn đã gửi lời chúc!');
     }, 400);
   };
@@ -231,7 +240,9 @@ export default function Guestbook({ cfg, showToast }) {
           }
         }}
       >
-        {wishes.length === 0 ? (
+        {loadError ? (
+          <p className="wishes__empty" role="alert">{loadError}</p>
+        ) : wishes.length === 0 ? (
           <p className="wishes__empty">Chưa có lời chúc nào. Hãy là người đầu tiên gửi lời chúc nhé!</p>
         ) : (
           <>

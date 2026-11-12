@@ -4,17 +4,26 @@
  * QUY TẮC BẮT BUỘC:
  * - Mọi thao tác đọc/ghi dữ liệu (config, lời chúc, RSVP) PHẢI đi qua các hàm
  *   trong file này. Không được đọc/ghi localStorage trực tiếp ở site.js hay admin.js.
- * - Hiện tại dùng localStorage. Khi có backend thật, CHỈ cần thay phần thân
- *   của các hàm dưới đây bằng fetch() gọi API / Firebase — giao diện hàm
- *   (tên hàm, tham số, giá trị trả về) giữ nguyên, code còn lại không đổi.
- *   Mỗi hàm đều có ghi chú "TODO: thay bằng API/Firebase" để dễ tìm.
+ * - Config, lời chúc và RSVP dùng Firebase; tuỳ chọn giao diện cục bộ vẫn dùng localStorage.
  *
- * Thứ tự nạp config (trong getConfig):
- *   (1) localStorage → (2) fetch file /config.json → (3) DEFAULT_CONFIG mẫu.
+ * Thứ tự nạp config: Firestore → localStorage cũ → file config.json → mặc định.
  * Lưu ý: khi mở bằng file:// thì fetch() sẽ lỗi, hàm tự bắt lỗi và rơi về (3).
  */
 
 import { DEFAULT_CONFIG } from './defaultConfig.js';
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  setDoc,
+  updateDoc,
+  where,
+} from 'firebase/firestore';
+import { db } from './firebase.js';
 
 // ------------------------------------------------------------------
 // Khoá lưu trữ & phiên bản
@@ -112,13 +121,12 @@ export function migrateConfig(config) {
 }
 
 /**
- * Lấy config hiện tại.
- * Thứ tự: (1) localStorage → (2) fetch /config.json → (3) DEFAULT_CONFIG.
- * Luôn trả về object đã migrate, không bao giờ trả về null.
+ * Lấy config từ Firestore; chỉ fallback nếu tài liệu chưa được tạo.
  */
-// TODO: thay bằng API/Firebase — ví dụ: GET /api/config (kèm fallback local)
 export async function getConfig() {
-  // (1) localStorage
+  const remote = await getDoc(doc(db, 'site', 'config'));
+  if (remote.exists()) return migrateConfig(remote.data());
+
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.config);
     if (raw) {
@@ -129,7 +137,6 @@ export async function getConfig() {
     console.warn('[store] Không đọc được config trong localStorage:', e);
   }
 
-  // (2) file config.json đặt cạnh index.html (khi deploy)
   try {
     const url = new URL('../config.json', import.meta.url);
     const res = await fetch(url, { cache: 'no-store' });
@@ -141,7 +148,6 @@ export async function getConfig() {
     // Mở bằng file:// hoặc chưa có file config.json → bỏ qua, dùng mẫu
   }
 
-  // (3) Dữ liệu mẫu
   return deepClone(DEFAULT_CONFIG);
 }
 
@@ -157,44 +163,44 @@ export function getConfigSync() {
 }
 
 /**
- * Lưu config (ghi đè toàn bộ).
- * Trả về { ok: true } hoặc { ok: false, error: '...' } khi localStorage đầy.
+ * Lưu config (ghi đè toàn bộ) lên Firestore.
  */
-// TODO: thay bằng API/Firebase — ví dụ: PUT /api/config
-export function saveConfig(config) {
+export async function saveConfig(config) {
   try {
     const cfg = migrateConfig(config);
-    localStorage.setItem(STORAGE_KEYS.config, JSON.stringify(cfg));
+    const bytes = new TextEncoder().encode(JSON.stringify(cfg)).length;
+    if (bytes >= 900 * 1024) {
+      return {
+        ok: false,
+        error: 'Cấu hình quá lớn cho Firestore. Hãy dùng URL ảnh thay vì dữ liệu ảnh base64.'
+      };
+    }
+    await setDoc(doc(db, 'site', 'config'), cfg);
     return { ok: true, config: cfg };
   } catch (e) {
-    // Thường gặp nhất: QuotaExceededError — localStorage đầy do ảnh base64
     console.error('[store] Lưu config thất bại:', e);
-    return {
-      ok: false,
-      error:
-        'Bộ nhớ trình duyệt đã đầy (localStorage ~5MB). Hãy xoá bớt ảnh đã upload (dùng URL ảnh thay vì upload) hoặc xuất config ra file JSON rồi khôi phục mặc định.'
-    };
+    return { ok: false, error: e.message || 'Không thể lưu cấu hình lên Firebase.' };
   }
 }
 
-/** Xoá config đã lưu, quay về dữ liệu mẫu mặc định. */
-// TODO: thay bằng API/Firebase — ví dụ: DELETE /api/config
-export function resetConfig() {
+/** Ghi cấu hình mặc định lên Firestore. */
+export async function resetConfig() {
   try {
     localStorage.removeItem(STORAGE_KEYS.config);
   } catch (e) {
     console.warn('[store] Không xoá được config:', e);
   }
-  return deepClone(DEFAULT_CONFIG);
+  const result = await saveConfig(DEFAULT_CONFIG);
+  if (!result.ok) throw new Error(result.error);
+  return result.config;
 }
 
 /**
  * Xuất config thành file config.json để tải về.
  * Hướng dẫn: đặt file này cạnh index.html khi deploy để khách thấy cấu hình.
  */
-// TODO: thay bằng API/Firebase — ví dụ: GET /api/config/export
-export function exportConfig() {
-  const config = getConfigSync();
+export async function exportConfig() {
+  const config = await getConfig();
   const blob = new Blob([JSON.stringify(config, null, 2)], {
     type: 'application/json'
   });
@@ -214,7 +220,6 @@ export function exportConfig() {
  * Validate cấu trúc trước khi áp dụng — sai định dạng thì báo lỗi cụ thể.
  * Trả về Promise<{ ok: true, config }> hoặc throw Error với thông điệp rõ ràng.
  */
-// TODO: thay bằng API/Firebase — ví dụ: POST /api/config/import
 export async function importConfig(file) {
   if (!file) throw new Error('Chưa chọn file để nhập.');
   let text;
@@ -242,7 +247,7 @@ export async function importConfig(file) {
     throw new Error('Thiếu trường bắt buộc "sections" (danh sách section, phải là mảng).');
   }
   const config = migrateConfig(parsed);
-  const saved = saveConfig(config);
+  const saved = await saveConfig(config);
   if (!saved.ok) throw new Error(saved.error);
   return { ok: true, config };
 }
@@ -251,114 +256,78 @@ export async function importConfig(file) {
 // LỜI CHÚC (Sổ lưu bút)
 // ------------------------------------------------------------------
 
-// Lời chúc mẫu — chỉ dùng lần đầu khi chưa có lời chúc nào trong máy.
-const SAMPLE_WISHES = [
-  {
-    id: 'wish-sample-1',
-    name: 'Gia đình nhà trai',
-    email: '',
-    message: 'Chúc hai con trăm năm hạnh phúc, sớm sinh quý tử!',
-    createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-    approved: true
-  },
-  {
-    id: 'wish-sample-2',
-    name: 'Minh Anh',
-    email: '',
-    message: 'Chúc mừng hạnh phúc hai bạn! Cuối cùng ngày này cũng đến, mừng cho hai bạn lắm!',
-    createdAt: new Date(Date.now() - 86400000).toISOString(),
-    approved: true
-  }
-];
-
-function readList(key, seed = []) {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) {
-      if (seed.length) localStorage.setItem(key, JSON.stringify(seed));
-      return deepClone(seed);
-    }
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : deepClone(seed);
-  } catch (e) {
-    console.warn(`[store] Không đọc được ${key}:`, e);
-    return deepClone(seed);
-  }
-}
-
-function writeList(key, list) {
-  try {
-    localStorage.setItem(key, JSON.stringify(list));
-    return { ok: true };
-  } catch (e) {
-    console.error(`[store] Lưu ${key} thất bại:`, e);
-    return {
-      ok: false,
-      error: 'Bộ nhớ trình duyệt đã đầy. Hãy xoá bớt dữ liệu cũ hoặc xuất ra file rồi xoá.'
-    };
-  }
-}
-
 /** Lấy toàn bộ lời chúc (mới nhất lên đầu). */
-// TODO: thay bằng API/Firebase — ví dụ: GET /api/wishes
-export function getWishes() {
-  const list = readList(STORAGE_KEYS.wishes, SAMPLE_WISHES);
-  return list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+export async function getWishes(approvedOnly = false) {
+  const wishesRef = collection(db, 'wishes');
+  const snapshot = await getDocs(
+    approvedOnly ? query(wishesRef, where('approved', '==', true)) : wishesRef,
+  );
+  return snapshot.docs
+    .map((item) => ({ id: item.id, ...item.data() }))
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
 
 /** Thêm một lời chúc mới. `wish` = { name, email?, message, approved? } */
-// TODO: thay bằng API/Firebase — ví dụ: POST /api/wishes
-export function addWish(wish) {
-  const list = getWishes();
+export async function addWish(wish) {
   const item = {
-    id: uid('wish'),
     name: String(wish.name || 'Khách mời').trim(),
     email: String(wish.email || '').trim(),
     message: String(wish.message || '').trim(),
     createdAt: new Date().toISOString(),
     approved: wish.approved !== undefined ? !!wish.approved : true
   };
-  list.unshift(item);
-  const result = writeList(STORAGE_KEYS.wishes, list);
-  return result.ok ? { ok: true, wish: item } : { ok: false, error: result.error };
+  try {
+    const result = await addDoc(collection(db, 'wishes'), item);
+    return { ok: true, wish: { id: result.id, ...item } };
+  } catch (e) {
+    console.error('[store] Gửi lời chúc thất bại:', e);
+    return { ok: false, error: e.message || 'Không thể lưu lời chúc lên Firebase.' };
+  }
 }
 
 /** Xoá một lời chúc theo id. */
-// TODO: thay bằng API/Firebase — ví dụ: DELETE /api/wishes/:id
-export function deleteWish(id) {
-  const list = getWishes().filter((w) => w.id !== id);
-  return writeList(STORAGE_KEYS.wishes, list);
+export async function deleteWish(id) {
+  try {
+    await deleteDoc(doc(db, 'wishes', id));
+    return { ok: true };
+  } catch (e) {
+    console.error('[store] Xoá lời chúc thất bại:', e);
+    return { ok: false, error: e.message || 'Không thể xoá lời chúc.' };
+  }
 }
 
 /** Duyệt (cho hiển thị) một lời chúc đang chờ duyệt. */
-// TODO: thay bằng API/Firebase — ví dụ: PATCH /api/wishes/:id { approved: true }
-export function approveWish(id) {
-  const list = getWishes();
-  const item = list.find((w) => w.id === id);
-  if (!item) return { ok: false, error: 'Không tìm thấy lời chúc.' };
-  item.approved = true;
-  return writeList(STORAGE_KEYS.wishes, list);
+export async function approveWish(id) {
+  try {
+    await updateDoc(doc(db, 'wishes', id), { approved: true });
+    return { ok: true };
+  } catch (e) {
+    console.error('[store] Duyệt lời chúc thất bại:', e);
+    return { ok: false, error: e.message || 'Không thể duyệt lời chúc.' };
+  }
 }
 
 /** Ẩn một lời chúc đã duyệt (đưa về trạng thái chờ duyệt). */
-// TODO: thay bằng API/Firebase — ví dụ: PATCH /api/wishes/:id { approved: false }
-export function hideWish(id) {
-  const list = getWishes();
-  const item = list.find((w) => w.id === id);
-  if (!item) return { ok: false, error: 'Không tìm thấy lời chúc.' };
-  item.approved = false;
-  return writeList(STORAGE_KEYS.wishes, list);
+export async function hideWish(id) {
+  try {
+    await updateDoc(doc(db, 'wishes', id), { approved: false });
+    return { ok: true };
+  } catch (e) {
+    console.error('[store] Ẩn lời chúc thất bại:', e);
+    return { ok: false, error: e.message || 'Không thể ẩn lời chúc.' };
+  }
 }
 
 // ------------------------------------------------------------------
 // RSVP / KHÁCH MỜI
 // ------------------------------------------------------------------
 
-/** Lấy toàn bộ RSVP (mới nhất lên đầu). */
-// TODO: thay bằng API/Firebase — ví dụ: GET /api/rsvps
-export function getRsvps() {
-  const list = readList(STORAGE_KEYS.rsvps, []);
-  return list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+/** Lấy toàn bộ RSVP; quyền đọc Firestore chỉ cấp cho admin. */
+export async function getRsvps() {
+  const snapshot = await getDocs(collection(db, 'rsvps'));
+  return snapshot.docs
+    .map((item) => ({ id: item.id, ...item.data() }))
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
 
 /**
@@ -366,11 +335,8 @@ export function getRsvps() {
  * `rsvp` = { name, phone, email?, guests, side?, ceremonies?, message?, status? }
  * Trả về { ok: true, rsvp } hoặc { ok: false, error }.
  */
-// TODO: thay bằng API/Firebase — ví dụ: POST /api/rsvps
-export function addRsvp(rsvp) {
-  const list = getRsvps();
+export async function addRsvp(rsvp) {
   const item = {
-    id: uid('rsvp'),
     name: String(rsvp.name || '').trim(),
     phone: String(rsvp.phone || '').trim(),
     email: String(rsvp.email || '').trim(),
@@ -381,24 +347,36 @@ export function addRsvp(rsvp) {
     message: String(rsvp.message || '').trim(),
     createdAt: new Date().toISOString()
   };
-  list.unshift(item);
-  const result = writeList(STORAGE_KEYS.rsvps, list);
-  return result.ok ? { ok: true, rsvp: item } : { ok: false, error: result.error };
+  try {
+    await setDoc(doc(db, 'rsvps', item.phone), item);
+    return { ok: true, rsvp: { id: item.phone, ...item } };
+  } catch (e) {
+    console.error('[store] Lưu RSVP thất bại:', e);
+    const error = e.code === 'permission-denied'
+      ? 'SĐT này có thể đã xác nhận hoặc Firestore Rules chưa được cài đúng.'
+      : e.message || 'Không thể lưu RSVP lên Firebase.';
+    return { ok: false, error };
+  }
 }
 
 /** Xoá một RSVP theo id. */
-// TODO: thay bằng API/Firebase — ví dụ: DELETE /api/rsvps/:id
-export function deleteRsvp(id) {
-  const list = getRsvps().filter((r) => r.id !== id);
-  return writeList(STORAGE_KEYS.rsvps, list);
+export async function deleteRsvp(id) {
+  try {
+    await deleteDoc(doc(db, 'rsvps', id));
+    return { ok: true };
+  } catch (e) {
+    console.error('[store] Xoá RSVP thất bại:', e);
+    return { ok: false, error: e.message || 'Không thể xoá RSVP.' };
+  }
 }
 
 /** Đổi trạng thái một RSVP (yes / no / maybe). */
-// TODO: thay bằng API/Firebase — ví dụ: PATCH /api/rsvps/:id
-export function updateRsvpStatus(id, status) {
-  const list = getRsvps();
-  const item = list.find((r) => r.id === id);
-  if (!item) return { ok: false, error: 'Không tìm thấy khách mời.' };
-  item.status = status;
-  return writeList(STORAGE_KEYS.rsvps, list);
+export async function updateRsvpStatus(id, status) {
+  try {
+    await updateDoc(doc(db, 'rsvps', id), { status });
+    return { ok: true };
+  } catch (e) {
+    console.error('[store] Cập nhật RSVP thất bại:', e);
+    return { ok: false, error: e.message || 'Không thể cập nhật RSVP.' };
+  }
 }

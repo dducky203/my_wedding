@@ -5,6 +5,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getConfig } from '../lib/store.js';
+import { DEFAULT_CONFIG } from '../lib/defaultConfig.js';
 import { coupleNames } from '../lib/utils.js';
 
 /** Áp theme từ config lên CSS variables ở :root (như applyTheme bản gốc). */
@@ -63,12 +64,17 @@ export function useConfig(isRsvpPage = false) {
   useEffect(() => {
     let alive = true;
     const load = () => {
-      getConfig().then((c) => {
-        if (!alive) return;
-        setCfg(c);
-        applyTheme(c);
-        applySeo(c, isRsvpPage);
-      });
+      getConfig()
+        .catch((err) => {
+          console.error('[config] Không tải được cấu hình Firebase:', err);
+          return DEFAULT_CONFIG;
+        })
+        .then((c) => {
+          if (!alive) return;
+          setCfg(c);
+          applyTheme(c);
+          applySeo(c, isRsvpPage);
+        });
     };
     load();
     const onMessage = (e) => {

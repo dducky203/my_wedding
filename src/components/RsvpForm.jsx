@@ -10,7 +10,7 @@
  * - Gửi xong: ẩn form, hiện màn hình cảm ơn (tên + trạng thái + số người).
  */
 import { useEffect, useRef, useState } from 'react';
-import { getRsvps, addRsvp } from '../lib/store.js';
+import { addRsvp } from '../lib/store.js';
 import { fmtDateShort } from '../lib/utils.js';
 import { Icon } from '../lib/icons.jsx';
 
@@ -80,20 +80,14 @@ export default function RsvpForm({ cfg, showToast }) {
       setError('Email chưa đúng định dạng.');
       return;
     }
-    if (guestCount < 1 || guestCount > 20) {
+    if (!Number.isInteger(guestCount) || guestCount < 1 || guestCount > 20) {
       setError('Số người tham dự phải từ 1 đến 20.');
       return;
     }
-    // Chặn gửi trùng bằng SĐT
-    if (cleanPhone && getRsvps().find((r) => r.phone === cleanPhone)) {
-      setError('SĐT này đã xác nhận rồi. Nếu cần thay đổi, vui lòng liên hệ trực tiếp cô dâu chú rể.');
-      return;
-    }
-
     setSubmitting(true);
     if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => {
-      const result = addRsvp({
+    timerRef.current = setTimeout(async () => {
+      const result = await addRsvp({
         name: cleanName,
         phone: cleanPhone,
         email: cleanEmail,

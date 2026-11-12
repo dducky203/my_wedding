@@ -12,7 +12,7 @@
  *   định dạng URL (được phép là đường dẫn tương đối như
  *   assets/beautiful-in-white.mp3). ogImage chấp nhận thêm data:image
  *   (ảnh upload) — nếu không, cứ upload ảnh og là sẽ không lưu được.
- * - Không Firebase, không thêm tính năng mới ngoài bản gốc.
+ * - Config, lời chúc, RSVP và ảnh được lưu trên Firebase.
  * - Không dùng thêm thư viện ngoài react/react-dom nên một số chỗ khác bản
  *   gốc: cắt ảnh = center-crop tự động theo đúng tỉ lệ (không có Cropper.js
  *   tương tác), kéo-thả = HTML5 native drag & drop (không SortableJS),
@@ -21,7 +21,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  getConfigSync,
+  getConfig,
   saveConfig,
   resetConfig,
   exportConfig,
@@ -38,10 +38,12 @@ import {
   storageUsage,
   uid,
   deepClone,
-  STORAGE_KEYS,
 } from '../lib/store.js';
-import { isAdminLoggedIn, logoutAdmin, storageGet, storageSet } from '../lib/auth.js';
-import { sha256Hex } from '../lib/sha256.js';
+import { auth, changeAdminPassword, logoutAdmin, storageGet, storageSet } from '../lib/auth.js';
+import { onAuthStateChanged } from 'firebase/auth';
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { DEFAULT_CONFIG } from '../lib/defaultConfig.js';
+import { storage } from '../lib/firebase.js';
 import { fmtDateShort, parseYoutubeId } from '../lib/utils.js';
 import { makeGiftQrSvg, isUsableQrImage } from '../lib/qr.js';
 import { Icon } from '../lib/icons.jsx';
@@ -401,7 +403,7 @@ function StorageBar({ usage }) {
       </div>
       <div className="storage-bar__text">
         {`Đã dùng ${usage.usedMB} MB / ~5 MB (${usage.percent}%)`}
-        {over ? ' — Sắp đầy! Hãy xoá bớt ảnh upload hoặc dùng URL ảnh.' : ''}
+        {over ? ' — Sắp đầy bộ nhớ localStorage trên thiết bị.' : ''}
       </div>
     </div>
   );
@@ -475,13 +477,14 @@ function moveBefore(list, fromId, toId) {
 // ------------------------------------------------------------------
 export default function AdminDashboard() {
   // Draft trong ref (sửa trực tiếp như bản gốc); `version` kích hoạt render.
-  const draftRef = useRef(getConfigSync());
-  const lastSavedRef = useRef(deepClone(draftRef.current));
+  const draftRef = useRef(deepClone(DEFAULT_CONFIG));
+  const lastSavedRef = useRef(deepClone(DEFAULT_CONFIG));
   const [version, setVersion] = useState(0);
   const [dirty, setDirty] = useState(false);
   const dirtyRef = useRef(false);
   const [screen, setScreen] = useState('overview');
   const [authed, setAuthed] = useState(false);
+  const [configReady, setConfigReady] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [wishes, setWishes] = useState([]);
   const [rsvps, setRsvps] = useState([]);
@@ -524,9 +527,15 @@ export default function AdminDashboard() {
   }
 
   // ---------------- Danh sách lời chúc / RSVP ----------------
-  function refreshLists() {
-    setWishes(getWishes());
-    setRsvps(getRsvps());
+  async function refreshLists() {
+    try {
+      const [nextWishes, nextRsvps] = await Promise.all([getWishes(), getRsvps()]);
+      setWishes(nextWishes);
+      setRsvps(nextRsvps);
+    } catch (err) {
+      console.error('[dashboard] Không tải được dữ liệu Firebase:', err);
+      toast(`Không tải được dữ liệu: ${err.message || 'hãy kiểm tra Firebase Rules.'}`, 'error');
+    }
   }
 
   // ---------------- Draft: sửa + đánh dấu chưa lưu ----------------
@@ -618,14 +627,15 @@ export default function AdminDashboard() {
   }
 
   /** Lưu draft qua store.saveConfig(). Trả về true nếu lưu được. */
-  function saveNow(showToast = true) {
+  async function saveNow(showToast = true) {
+    if (!configReady) return false;
     const problems = validateDraft();
     setInvalidPaths(computeInvalidPaths());
     if (problems.length) {
       if (showToast) toast('Chưa lưu được: ' + problems[0], 'error');
       return false;
     }
-    const result = saveConfig(draftRef.current);
+    const result = await saveConfig(draftRef.current);
     if (!result.ok) {
       toast('Lưu thất bại: ' + (result.error || 'lỗi không rõ.'), 'error');
       return false;
@@ -651,26 +661,17 @@ export default function AdminDashboard() {
     toast('Đã hoàn tác về bản đã lưu gần nhất ✓');
   }
 
-  function handleLogout() {
-    logoutAdmin();
-    window.location.replace('login.html');
+  async function handleLogout() {
+    try {
+      await logoutAdmin();
+      window.location.replace('login.html');
+    } catch (err) {
+      toast(`Đăng xuất thất bại: ${err.message || 'hãy thử lại.'}`, 'error');
+    }
   }
 
   // ---------------- Upload ảnh ----------------
-  function checkStorageBeforeAdd(approxBytes) {
-    const usage = storageUsage();
-    if (usage.percent > 80) {
-      toast(`Bộ nhớ trình duyệt đã dùng ${usage.percent}% (${usage.usedMB}MB). Nên dùng URL ảnh thay vì upload thêm.`, 'error');
-      return false;
-    }
-    if (usage.usedBytes + approxBytes > usage.quotaBytes) {
-      toast('Ảnh này có thể làm đầy bộ nhớ trình duyệt. Hãy xoá bớt ảnh cũ hoặc dùng URL ảnh.', 'error');
-      return false;
-    }
-    return true;
-  }
-
-  /** Upload 1 file ảnh -> nén -> (tuỳ chọn) cắt giữa đúng tỉ lệ -> dataURL, hoặc null. */
+  /** Nén ảnh rồi lưu vào Firebase Storage; config chỉ giữ URL tải xuống. */
   async function uploadImage(file, { cropAspect = null, maxDim = 1600 } = {}) {
     if (!file || !file.type.startsWith('image/')) {
       toast('Vui lòng chọn file ảnh.', 'error');
@@ -678,9 +679,14 @@ export default function AdminDashboard() {
     }
     try {
       const compressed = await compressImageFile(file, maxDim);
-      if (!checkStorageBeforeAdd(compressed.length * 0.75)) return null;
-      if (cropAspect) return await centerCropDataUrl(compressed, cropAspect);
-      return compressed;
+      const dataUrl = cropAspect
+        ? await centerCropDataUrl(compressed, cropAspect)
+        : compressed;
+      const blob = await (await fetch(dataUrl)).blob();
+      const extension = blob.type === 'image/png' ? 'png' : 'jpg';
+      const imageRef = ref(storage, `wedding/${uid('image')}.${extension}`);
+      await uploadBytes(imageRef, blob, { contentType: blob.type });
+      return await getDownloadURL(imageRef);
     } catch (err) {
       toast(err.message || 'Không xử lý được ảnh.', 'error');
       return null;
@@ -688,23 +694,38 @@ export default function AdminDashboard() {
   }
 
   // ---------------- Effects ----------------
-  // Kiểm tra phiên + khởi tạo (chạy 1 lần).
+  // Xác thực Firebase, nạp cấu hình và dữ liệu cloud.
   useEffect(() => {
-    if (!isAdminLoggedIn()) {
-      window.location.replace('login.html');
-      return undefined;
-    }
-    setAuthed(true);
+    let alive = true;
     const darkOn = storageGet(localStorage, 'wedding_admin_dark') === '1';
     setDark(darkOn);
     document.body.classList.toggle('admin--dark', darkOn);
-    refreshLists();
     // Mã QR của thiệp (SEO) — sinh 1 lần, URL thiệp không đổi.
     const svg = qrSvgFor(invitationUrl());
     if (svg) {
       setQrSvg(svg);
       setQrReady(true);
     }
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        window.location.replace('login.html');
+        return;
+      }
+      try {
+        const config = await getConfig();
+        if (!alive) return;
+        draftRef.current = config;
+        lastSavedRef.current = deepClone(config);
+        setConfigReady(true);
+        setAuthed(true);
+        await refreshLists();
+      } catch (err) {
+        if (alive) {
+          setAuthed(true);
+          toast(`Không tải được cấu hình: ${err.message || 'hãy kiểm tra Firestore Rules.'}`, 'error');
+        }
+      }
+    });
     const onBeforeUnload = (e) => {
       if (!dirtyRef.current) return;
       e.preventDefault();
@@ -713,6 +734,8 @@ export default function AdminDashboard() {
     window.addEventListener('beforeunload', onBeforeUnload);
     const timers = toastTimersRef.current;
     return () => {
+      alive = false;
+      unsubscribe();
       window.removeEventListener('beforeunload', onBeforeUnload);
       timers.forEach((t) => clearTimeout(t));
     };
@@ -721,18 +744,19 @@ export default function AdminDashboard() {
 
   // Autosave: 1.5s sau lần sửa cuối cùng.
   useEffect(() => {
-    if (!dirty) return undefined;
-    const t = setTimeout(() => saveNow(false), 1500);
+    if (!dirty || !configReady) return undefined;
+    const t = setTimeout(() => { void saveNow(false); }, 1500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dirty, version]);
+  }, [dirty, version, configReady]);
 
   // Đổi màn hình: về đầu trang + tải lại dữ liệu tươi cho các màn có bảng.
   useEffect(() => {
+    if (!authed) return;
     window.scrollTo({ top: 0 });
     if (screen === 'overview' || screen === 'guestbook' || screen === 'rsvp') refreshLists();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [screen]);
+  }, [screen, authed]);
 
   // Đồng bộ âm lượng thẻ audio khi draft.music.volume đổi.
   useEffect(() => {
@@ -2379,24 +2403,24 @@ export default function AdminDashboard() {
   // ==================================================================
   // 10. SỔ LƯU BÚT
   // ==================================================================
-  function handleWishAction(action, id) {
+  async function handleWishAction(action, id) {
     if (action === 'approve') {
-      const r = approveWish(id);
+      const r = await approveWish(id);
       if (!r.ok) toast(r.error || 'Không duyệt được.', 'error');
       else {
-        refreshLists();
+        await refreshLists();
         toast('Đã duyệt lời chúc ✓');
       }
     } else if (action === 'hide') {
-      const r = hideWish(id);
+      const r = await hideWish(id);
       if (!r.ok) toast(r.error || 'Không ẩn được.', 'error');
       else {
-        refreshLists();
+        await refreshLists();
         toast('Đã ẩn lời chúc ✓');
       }
     } else if (action === 'delete') {
       if (!window.confirm('Xoá lời chúc này?')) return;
-      const r = deleteWish(id);
+      const r = await deleteWish(id);
       if (!r.ok) toast(r.error || 'Không xoá được.', 'error');
       else {
         setWishState((prev) => {
@@ -2404,26 +2428,23 @@ export default function AdminDashboard() {
           selected.delete(id);
           return { ...prev, selected };
         });
-        refreshLists();
+        await refreshLists();
         toast('Đã xoá lời chúc ✓');
       }
     }
   }
 
-  function handleDeleteSelectedWishes() {
+  async function handleDeleteSelectedWishes() {
     if (!wishState.selected.size) return;
     if (!window.confirm(`Xoá ${wishState.selected.size} lời chúc đã chọn?`)) return;
-    let failed = 0;
-    Array.from(wishState.selected).forEach((id) => {
-      const r = deleteWish(id);
-      if (!r.ok) failed++;
-    });
+    const results = await Promise.all(Array.from(wishState.selected, (id) => deleteWish(id)));
+    const failed = results.filter((r) => !r.ok).length;
     setWishState((prev) => ({ ...prev, selected: new Set() }));
-    refreshLists();
+    await refreshLists();
     toast(failed ? `Đã xoá, nhưng ${failed} mục lỗi.` : 'Đã xoá các lời chúc đã chọn ✓', failed ? 'error' : 'success');
   }
 
-  function submitWishModal(e) {
+  async function submitWishModal(e) {
     e.preventDefault();
     const name = wishForm.name.trim();
     const message = wishForm.message.trim();
@@ -2441,14 +2462,14 @@ export default function AdminDashboard() {
       return;
     }
     // Lời chúc thêm thủ công mặc định đã duyệt (do chính admin nhập hộ).
-    const r = addWish({ name, email, message, approved: true });
+    const r = await addWish({ name, email, message, approved: true });
     if (!r.ok) {
       toast(r.error || 'Không thêm được lời chúc.', 'error');
       return;
     }
     setWishModalOpen(false);
     setWishForm({ name: '', email: '', message: '' });
-    refreshLists();
+    await refreshLists();
     toast('Đã thêm lời chúc ✓');
   }
 
@@ -2929,13 +2950,13 @@ export default function AdminDashboard() {
                         className="form__select"
                         style={{ minWidth: 110 }}
                         value={r.status}
-                        onChange={(e) => {
-                          const res = updateRsvpStatus(r.id, e.target.value);
+                        onChange={async (e) => {
+                          const res = await updateRsvpStatus(r.id, e.target.value);
                           if (!res.ok) {
                             toast(res.error || 'Không đổi được trạng thái.', 'error');
                             return;
                           }
-                          refreshLists();
+                          await refreshLists();
                           toast('Đã đổi trạng thái RSVP ✓');
                         }}
                       >
@@ -2951,12 +2972,12 @@ export default function AdminDashboard() {
                       <button
                         className="btn btn--danger btn--sm"
                         type="button"
-                        onClick={() => {
+                        onClick={async () => {
                           if (!window.confirm('Xoá RSVP này?')) return;
-                          const res = deleteRsvp(r.id);
+                          const res = await deleteRsvp(r.id);
                           if (!res.ok) toast(res.error || 'Không xoá được.', 'error');
                           else {
-                            refreshLists();
+                            await refreshLists();
                             toast('Đã xoá RSVP ✓');
                           }
                         }}
@@ -3362,17 +3383,21 @@ export default function AdminDashboard() {
     }
   }
 
-  function handleResetConfig() {
+  async function handleResetConfig() {
     if (!window.confirm('Khôi phục toàn bộ cấu hình về mặc định? Mọi thay đổi chưa xuất file sẽ mất.')) return;
-    draftRef.current = resetConfig();
-    lastSavedRef.current = deepClone(draftRef.current);
-    dirtyRef.current = false;
-    setDirty(false);
-    setInvalidPaths(new Set());
-    bump();
-    notifyPreview();
-    setStorageTick((t) => t + 1);
-    toast('Đã khôi phục cấu hình mặc định ✓');
+    try {
+      draftRef.current = await resetConfig();
+      lastSavedRef.current = deepClone(draftRef.current);
+      dirtyRef.current = false;
+      setDirty(false);
+      setInvalidPaths(new Set());
+      bump();
+      notifyPreview();
+      setStorageTick((t) => t + 1);
+      toast('Đã khôi phục cấu hình mặc định ✓');
+    } catch (err) {
+      toast(`Khôi phục thất bại: ${err.message || 'hãy thử lại.'}`, 'error');
+    }
   }
 
   function downloadJson(filename, data) {
@@ -3406,20 +3431,20 @@ export default function AdminDashboard() {
           errors.push(`Mục ${i + 1}: thiếu tên hoặc lời chúc.`);
           continue;
         }
-        const r = addWish({ name: item.name, email: item.email || '', message: item.message, approved: item.approved !== undefined ? !!item.approved : true });
+        const r = await addWish({ name: item.name, email: item.email || '', message: item.message, approved: item.approved !== undefined ? !!item.approved : true });
         if (r.ok) added++;
         else errors.push(`Mục ${i + 1}: ${r.error}`);
       } else {
-        if (!String(item.name || '').trim()) {
-          errors.push(`Mục ${i + 1}: thiếu tên khách.`);
+        if (!String(item.name || '').trim() || !/^0\d{9}$/.test(String(item.phone || '').trim())) {
+          errors.push(`Mục ${i + 1}: thiếu tên hoặc SĐT 10 số hợp lệ.`);
           continue;
         }
-        const r = addRsvp({ name: item.name, phone: item.phone || '', email: item.email || '', guests: item.guests || 1, side: item.side || '', ceremonies: item.ceremonies || '', message: item.message || '', status: item.status || 'yes' });
+        const r = await addRsvp({ name: item.name, phone: item.phone, email: item.email || '', guests: item.guests || 1, side: item.side || '', ceremonies: item.ceremonies || '', message: item.message || '', status: item.status || 'yes' });
         if (r.ok) added++;
         else errors.push(`Mục ${i + 1}: ${r.error}`);
       }
     }
-    refreshLists();
+    await refreshLists();
     if (errors.length) toast(`Đã nhập ${added} mục, ${errors.length} mục lỗi. Lỗi đầu: ${errors[0]}`, 'error');
     else toast(`Đã nhập ${added} mục thành công ✓`);
   }
@@ -3438,9 +3463,13 @@ export default function AdminDashboard() {
             <button
               className="btn btn--primary"
               type="button"
-              onClick={() => {
-                exportConfig();
-                toast('Đã xuất config.json ✓ — đặt file này cạnh index.html khi deploy.');
+              onClick={async () => {
+                try {
+                  await exportConfig();
+                  toast('Đã xuất config.json ✓ — đặt file này cạnh index.html khi deploy.');
+                } catch (err) {
+                  toast(`Xuất cấu hình thất bại: ${err.message || 'hãy thử lại.'}`, 'error');
+                }
               }}
             >
               <Icon name="download" size={15} /> Xuất cấu hình (config.json)
@@ -3464,8 +3493,7 @@ export default function AdminDashboard() {
             </button>
           </div>
           <p className="form__hint">
-            <strong>Hướng dẫn deploy:</strong> sau khi xuất, đặt file <code>config.json</code> cạnh <code>index.html</code> trên
-            hosting — khách mở thiệp sẽ thấy đúng cấu hình này mà không cần localStorage.
+            Cấu hình đang được đồng bộ lên Firestore. File <code>config.json</code> chỉ dùng để sao lưu hoặc triển khai dự phòng.
           </p>
         </div>
         <div className="card">
@@ -3474,9 +3502,13 @@ export default function AdminDashboard() {
             <button
               className="btn"
               type="button"
-              onClick={() => {
-                downloadJson('loi-chuc.json', getWishes());
-                toast('Đã xuất lời chúc (JSON) ✓');
+              onClick={async () => {
+                try {
+                  downloadJson('loi-chuc.json', await getWishes());
+                  toast('Đã xuất lời chúc (JSON) ✓');
+                } catch (err) {
+                  toast(`Xuất lời chúc thất bại: ${err.message || 'hãy thử lại.'}`, 'error');
+                }
               }}
             >
               <Icon name="download" size={15} /> Xuất lời chúc (JSON)
@@ -3484,9 +3516,13 @@ export default function AdminDashboard() {
             <button
               className="btn"
               type="button"
-              onClick={() => {
-                downloadJson('rsvp.json', getRsvps());
-                toast('Đã xuất RSVP (JSON) ✓');
+              onClick={async () => {
+                try {
+                  downloadJson('rsvp.json', await getRsvps());
+                  toast('Đã xuất RSVP (JSON) ✓');
+                } catch (err) {
+                  toast(`Xuất RSVP thất bại: ${err.message || 'hãy thử lại.'}`, 'error');
+                }
               }}
             >
               <Icon name="download" size={15} /> Xuất RSVP (JSON)
@@ -3523,9 +3559,9 @@ export default function AdminDashboard() {
           <p className="form__hint">File nhập phải là JSON mảng các đối tượng (đúng định dạng file đã xuất). Nhập sai định dạng sẽ báo lỗi cụ thể và không ghi đè dữ liệu cũ.</p>
         </div>
         <div className="card">
-          <h2 className="card__title">Dung lượng lưu trữ</h2>
+          <h2 className="card__title">Dung lượng localStorage trên thiết bị</h2>
           <StorageBar usage={usage} />
-          <p className="form__hint">localStorage giới hạn ~5MB. Ảnh upload lưu base64 rất tốn dung lượng — hãy dùng URL ảnh khi có thể.</p>
+          <p className="form__hint">Đây chỉ là dung lượng tuỳ chọn cục bộ của dashboard. Cấu hình, lời chúc, RSVP và ảnh được lưu trên Firebase.</p>
         </div>
       </section>
     );
@@ -3550,16 +3586,14 @@ export default function AdminDashboard() {
       return;
     }
     try {
-      const oldHash = await sha256Hex(oldPw);
-      if (oldHash !== storageGet(localStorage, STORAGE_KEYS.adminHash)) {
-        toast('Mật khẩu cũ không đúng.', 'error');
-        return;
-      }
-      storageSet(localStorage, STORAGE_KEYS.adminHash, await sha256Hex(newPw));
+      await changeAdminPassword(oldPw, newPw);
       setPwForm({ oldPw: '', newPw: '', newPw2: '' });
       toast('Đổi mật khẩu thành công ✓');
-    } catch {
-      toast('Trình duyệt không hỗ trợ Web Crypto.', 'error');
+    } catch (err) {
+      const message = ['auth/invalid-credential', 'auth/wrong-password'].includes(err.code)
+        ? 'Mật khẩu hiện tại không đúng.'
+        : err.message || 'Không thể đổi mật khẩu. Hãy đăng nhập lại rồi thử lại.';
+      toast(message, 'error');
     }
   }
 
@@ -3568,12 +3602,12 @@ export default function AdminDashboard() {
       <section className="screen is-active" id="screen-account" data-title="Cài đặt tài khoản">
         <div className="screen__head">
           <h1 className="screen__title">Cài đặt tài khoản</h1>
-          <p className="screen__desc">Đổi mật khẩu quản trị và tuỳ chọn hiển thị dashboard.</p>
+          <p className="screen__desc">Đổi mật khẩu Firebase Authentication và tuỳ chọn hiển thị dashboard.</p>
         </div>
         <div className="card">
           <h2 className="card__title">Đổi mật khẩu quản trị</h2>
           <p className="card__subtitle">
-            Mật khẩu được băm SHA-256 rồi mới lưu (khoá <code>wedding_admin_hash</code>).
+            Mật khẩu được quản lý an toàn bởi Firebase Authentication.
           </p>
           <form noValidate onSubmit={submitChangePassword}>
             <Field label="Mật khẩu cũ" required>
@@ -3635,8 +3669,7 @@ export default function AdminDashboard() {
         <div className="card">
           <h2 className="card__title">Lưu ý bảo mật</h2>
           <p style={{ fontSize: 14, lineHeight: 1.7 }}>
-            Đây chỉ là khoá giao diện, chưa phải bảo mật thật vì hệ thống không có backend — ai biết mở DevTools cũng có thể qua
-            được. Không dùng cho dữ liệu nhạy cảm.
+            Không chia sẻ thông tin đăng nhập quản trị. Firestore Rules giới hạn dữ liệu RSVP và quyền sửa cấu hình cho UID admin.
           </p>
         </div>
       </section>
