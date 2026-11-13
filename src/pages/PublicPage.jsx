@@ -228,6 +228,7 @@ export default function PublicPage() {
   const [heroIndex, setHeroIndex] = useState(0);
   const [now, setNow] = useState(() => Date.now());
   const [lightboxIndex, setLightboxIndex] = useState(null);
+  const lightboxTouchRef = useRef(null);
   const [calendarEvent, setCalendarEvent] = useState(null);
   const [musicPlaying, setMusicPlaying] = useState(false);
   const [loadingHide, setLoadingHide] = useState(false);
@@ -301,6 +302,9 @@ export default function PublicPage() {
 
   // Slideshow hero: tự đổi mỗi 5 giây
   const heroImages = cfg?.couple?.heroImages || [];
+  useEffect(() => {
+    setHeroIndex((i) => heroImages.length ? i % heroImages.length : 0);
+  }, [heroImages.length]);
   useEffect(() => {
     if (!cfg || heroImages.length <= 1 || !cfg.couple.heroSlideshow || REDUCE_MOTION) return undefined;
     const t = setInterval(() => setHeroIndex((i) => (i + 1) % heroImages.length), 5000);
@@ -712,6 +716,20 @@ export default function PublicPage() {
         <div
           id="lightbox" className="lightbox" role="dialog" aria-modal="true" aria-label="Xem ảnh cưới"
           onClick={(e) => { if (e.target === e.currentTarget) setLightboxIndex(null); }}
+          onTouchStart={(e) => {
+            const touch = e.touches.length === 1 ? e.touches[0] : null;
+            lightboxTouchRef.current = touch ? { x: touch.clientX, y: touch.clientY } : null;
+          }}
+          onTouchCancel={() => { lightboxTouchRef.current = null; }}
+          onTouchEnd={(e) => {
+            const start = lightboxTouchRef.current;
+            lightboxTouchRef.current = null;
+            if (!start || e.touches.length || !e.changedTouches.length) return;
+            const dx = e.changedTouches[0].clientX - start.x;
+            const dy = e.changedTouches[0].clientY - start.y;
+            if (Math.abs(dx) < 50 || Math.abs(dx) <= Math.abs(dy)) return;
+            setLightboxIndex((i) => (i + (dx < 0 ? 1 : -1) + photos.length) % photos.length);
+          }}
         >
           <button type="button" className="lightbox__close" id="lightbox-close" aria-label="Đóng" onClick={() => setLightboxIndex(null)}>
             <Icon name="x" size={18} />
@@ -724,6 +742,7 @@ export default function PublicPage() {
           </button>
           <figure className="lightbox__figure">
             <img
+              key={`${lightboxIndex}-${lightboxPhoto.src}`}
               className="lightbox__img" id="lightbox-img"
               src={lightboxPhoto.src} alt={lightboxPhoto.caption || `Ảnh cưới ${lightboxIndex + 1}`}
               onError={(e) => handleImgError(e, `album-${lightboxIndex + 1}`)}

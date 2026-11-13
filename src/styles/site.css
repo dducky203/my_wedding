@@ -560,6 +560,7 @@ button { font-family: inherit; cursor: pointer; }
 .lightbox__caption { color: var(--color-white); margin-top: 12px; font-size: 0.95rem; display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; }
 .lightbox__counter { opacity: 0.8; }
 .lightbox__close, .lightbox__nav {
+  z-index: 1;
   position: absolute; background: rgba(255, 255, 255, 0.14); border: none;
   color: var(--color-white); border-radius: 50%;
   width: 46px; height: 46px; font-size: 1.2rem;
@@ -703,17 +704,11 @@ button { font-family: inherit; cursor: pointer; }
 .album__more, .wishes__more, .footer__actions { justify-content: center; text-align: center; }
 
 /* ---------- Sửa mobile theo yêu cầu Thầy (11/2026) ---------- */
-/* (1) Ảnh nền hero CỐ ĐỊNH khi cuộn trên điện thoại.
-   background-attachment: fixed không có tác dụng trên trình duyệt
-   điện thoại nên dùng phần tử fixed + cắt theo khung hero bằng
-   clip-path: nền đứng yên khi lướt, nội dung trôi lên trên nền. */
+/* (1) Nền hero bám theo kích thước section trên trình duyệt mobile. */
 @media (max-width: 767px) {
-  .hero {
-    -webkit-clip-path: inset(0);
-    clip-path: inset(0);
-  }
   .hero__slides,
-  .hero__overlay { position: fixed; inset: 0; }
+  .hero__overlay { position: absolute; inset: 0; }
+  .lightbox__figure { touch-action: pan-y pinch-zoom; }
 }
 
 /* (2) Mừng cưới luôn 1 hàng (2 thẻ chú rể/cô dâu cạnh nhau) kể cả
