@@ -13,6 +13,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getWishes, addWish } from '../lib/store.js';
+import { validateWish } from '../lib/wishValidation.js';
 
 function perViewForWidth() {
   return typeof window !== 'undefined' && window.innerWidth >= 768 ? 2 : 1;
@@ -133,16 +134,9 @@ export default function Guestbook({ cfg, showToast }) {
     const cleanName = name.trim();
     const cleanEmail = email.trim();
     const cleanMessage = message.trim();
-    if (!cleanName) {
-      setError('Vui lòng nhập họ tên của bạn.');
-      return;
-    }
-    if (!cleanMessage) {
-      setError('Vui lòng viết lời chúc.');
-      return;
-    }
-    if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
-      setError('Email chưa đúng định dạng.');
+    const validationError = validateWish({ name: cleanName, email: cleanEmail, message: cleanMessage });
+    if (validationError) {
+      setError(validationError);
       return;
     }
     setSubmitting(true);
@@ -152,7 +146,7 @@ export default function Guestbook({ cfg, showToast }) {
         name: cleanName,
         email: cleanEmail,
         message: cleanMessage,
-        approved: !gb.moderation,
+        approved: true,
       });
       setSubmitting(false);
       if (!result.ok) {

@@ -1,19 +1,23 @@
 import { getApp, getApps, initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
-import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
-  apiKey: 'AIzaSyBlGD5vFK0HJpjPg42-BYb-iQvFjmdIGE',
-  authDomain: 'my-wedding-28f9d.firebaseapp.com',
-  projectId: 'my-wedding-28f9d',
-  storageBucket: 'my-wedding-28f9d.firebasestorage.app',
-  messagingSenderId: '394165455946',
-  appId: '1:394165455946:web:5102db45fa176b8c3b6ab3',
-  measurementId: 'G-KPN7YCWZ2X',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
+
+const requiredFields = ['apiKey', 'authDomain', 'projectId', 'storageBucket', 'messagingSenderId', 'appId'];
+const missingFields = requiredFields.filter((key) => !firebaseConfig[key]?.trim());
+if (missingFields.length) {
+  throw new Error(`Thiếu cấu hình Firebase: ${missingFields.join(', ')}. Hãy điền .env theo .env.example và khởi động lại Vite.`);
+}
 
 export const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
-export const storage = getStorage(app);

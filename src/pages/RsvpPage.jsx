@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 /**
  * RsvpPage.jsx — Trang xác nhận tham dự riêng (port rsvp.html + site.js gốc).
  *
@@ -36,44 +37,46 @@ export default function RsvpPage() {
   }
 
   const [firstName, secondName] = coupleNames(cfg);
-  const names = `${firstName} & ${secondName}`;
 
   return (
     <>
       <header className="nav nav--simple">
         <div className="nav__inner container">
-          <a href="index.html" className="nav__logo" id="nav-monogram" aria-label="Về thiệp cưới">
-            {cfg.couple.monogram}
-          </a>
+          <Link to="/" className="nav__logo" id="nav-monogram" aria-label="Về thiệp cưới">
+            <img className="nav__logo-image" src="/assets/logo.webp" alt="Logo thiệp cưới" />
+          </Link>
         </div>
       </header>
 
       <main id="main" className="rsvp">
         <div className="container container--narrow">
-          <p className="rsvp__names" id="rsvp-names">{names}</p>
+          <p className="rsvp__names" id="rsvp-names">
+            <span className="rsvp__name">{firstName}</span>{' '}
+            <span className="rsvp__amp">&</span>{' '}
+            <span className="rsvp__name">{secondName}</span>
+          </p>
           <h1 className="section__title" id="rsvp-title">{cfg.rsvp.title}</h1>
           <p className="section__subtitle" id="rsvp-subtitle">{cfg.rsvp.subtitle}</p>
 
           <RsvpForm cfg={cfg} showToast={showToast} />
 
           <div className="rsvp__footer-nav">
-            <a href="index.html" className="nav__back">
+            <Link to="/" className="nav__back">
               <Icon name="arrowLeft" size={17} /> Về thiệp cưới
-            </a>
+            </Link>
           </div>
         </div>
       </main>
 
       <footer className="footer footer--simple">
         <div className="container footer__inner">
-          <p className="footer__names" id="footer-names">{names}</p>
+          <p className="footer__names" id="footer-names">
+            <span className="footer__name">{firstName}</span>{' '}
+            <span className="footer__amp">&</span>{' '}
+            <span className="footer__name">{secondName}</span>
+          </p>
           <p className="footer__date" id="footer-date">{fmtDate(cfg.couple.weddingDate)}</p>
           <p className="footer__slogan" id="footer-slogan">{cfg.couple.slogan}</p>
-          <div className="footer__actions">
-            <a href="admin/login.html" className="btn btn--primary footer__admin">
-              <Icon name="grid" size={18} /> Quản trị
-            </a>
-          </div>
         </div>
       </footer>
 

@@ -136,6 +136,7 @@ button { font-family: inherit; cursor: pointer; }
   border-radius: 50%;
   animation: spin 0.9s linear infinite;
 }
+.loading__logo { display: block; width: min(200px, 50vw); height: auto; object-fit: contain; }
 .loading__text { color: var(--color-muted); font-size: 0.95rem; margin: 0; }
 
 /* ---------- Hiệu ứng rơi (cánh hoa / trái tim) ---------- */
@@ -157,10 +158,10 @@ button { font-family: inherit; cursor: pointer; }
 /* ---------- Navbar ---------- */
 .nav {
   position: fixed; top: 0; left: 0; right: 0; z-index: 100;
-  background: linear-gradient(180deg, rgba(26, 18, 16, 0.55), rgba(26, 18, 16, 0.16) 72%, rgba(26, 18, 16, 0));
+  background: #fff;
   transition: background 0.3s ease, box-shadow 0.3s ease;
 }
-.nav--scrolled { background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(8px); box-shadow: 0 2px 16px rgba(74, 63, 58, 0.1); border-bottom: 1px solid var(--color-border); }
+.nav--scrolled { background: #fff; box-shadow: 0 2px 16px rgba(74, 63, 58, 0.1); border-bottom: 1px solid var(--color-border); }
 /* Toàn bộ thanh header (logo + menu + nút quản trị) căn giữa trang */
 .nav__inner { display: flex; align-items: center; justify-content: center; gap: 14px; height: var(--nav-height); }
 .nav__logo {
@@ -178,6 +179,7 @@ button { font-family: inherit; cursor: pointer; }
   text-shadow: 0 1px 12px rgba(0, 0, 0, 0.45);
 }
 .nav__logo:hover { text-decoration: none; }
+.nav__logo-image { display: block; height: 56px; width: auto; max-width: 170px; object-fit: contain; }
 .nav__toggle {
   display: inline-flex; align-items: center; justify-content: center;
   width: 44px; height: 44px;
@@ -201,11 +203,11 @@ button { font-family: inherit; cursor: pointer; }
 .nav__menu a.nav__link--active { color: var(--color-primary); font-weight: 700; }
 .nav__back { font-weight: 500; color: var(--color-text); display: inline-flex; align-items: center; gap: 6px; }
 .nav__back:hover { color: var(--color-primary); text-decoration: none; }
-.nav--simple { position: sticky; background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(8px); box-shadow: 0 2px 16px rgba(74, 63, 58, 0.08); }
+.nav--simple { position: sticky; background: #fff; box-shadow: 0 2px 16px rgba(74, 63, 58, 0.08); }
 
 /* Khi đã cuộn xuống (nền trắng) hoặc ở trang đơn giản: logo + nút menu về màu chính */
 .nav--scrolled .nav__logo, .nav--simple .nav__logo { color: var(--color-primary); text-shadow: none; }
-.nav__toggle { color: var(--color-white); }
+.nav__toggle { color: var(--color-primary); }
 .nav--scrolled .nav__toggle, .nav--simple .nav__toggle { color: var(--color-primary); }
 .nav__toggle .icon { width: 24px; height: 24px; }
 
@@ -658,9 +660,9 @@ button { font-family: inherit; cursor: pointer; }
   }
   .nav__menu a { padding: 8px 11px; border-radius: 8px; font-size: 0.95rem; white-space: nowrap; }
   .nav__menu a.nav__link--active { background: rgba(183, 110, 121, 0.12); }
-  .nav:not(.nav--scrolled):not(.nav--simple) .nav__menu a { color: var(--color-white); text-shadow: 0 1px 8px rgba(0, 0, 0, 0.45); }
-  .nav:not(.nav--scrolled):not(.nav--simple) .nav__menu a:hover { color: var(--color-white); background: rgba(255, 255, 255, 0.16); }
-  .nav:not(.nav--scrolled):not(.nav--simple) .nav__menu a.nav__link--active { background: rgba(255, 255, 255, 0.24); color: var(--color-white); }
+  .nav:not(.nav--scrolled):not(.nav--simple) .nav__menu a { color: var(--color-text); text-shadow: none; }
+  .nav:not(.nav--scrolled):not(.nav--simple) .nav__menu a:hover { color: var(--color-primary); background: rgba(183, 110, 121, 0.08); }
+  .nav:not(.nav--scrolled):not(.nav--simple) .nav__menu a.nav__link--active { background: rgba(183, 110, 121, 0.12); color: var(--color-primary); }
 }
 
 @media (min-width: 1024px) {
@@ -746,6 +748,10 @@ button { font-family: inherit; cursor: pointer; }
 /* (4) Tên cô dâu/chú rể ở hero: trên mobile và tablet mỗi tên 1 dòng,
    dấu & 1 dòng riêng — không ngắt giữa tên, không dính & vào tên. */
 @media (max-width: 1024px) {
+  .rsvp__names { font-size: clamp(1.8rem, 8vw, 2.6rem); }
+  .rsvp__names .rsvp__name,
+  .rsvp__names .rsvp__amp { display: block; }
+  .rsvp__names .rsvp__name { white-space: nowrap; }
   .hero__names { font-size: clamp(2.5rem, 11vw, 3.4rem); }
   .hero__names .hero__name,
   .hero__names .hero__amp { display: block; }

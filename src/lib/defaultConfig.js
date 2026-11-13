@@ -238,8 +238,8 @@ export const DEFAULT_CONFIG = {
     "enabled": true,
     "title": "Sổ Lưu Bút",
     "subtitle": "Hãy để lại những lời chúc tốt đẹp nhất cho chúng mình nhé!",
-    "moderation": true,
-    "thankYou": "Cảm ơn bạn đã gửi lời chúc! Lời chúc của bạn sẽ được hiển thị sau khi được duyệt.",
+    "moderation": false,
+    "thankYou": "Cảm ơn bạn đã gửi lời chúc! Lời chúc của bạn đã được hiển thị trên sổ lưu bút.",
     "suggestions": [
       "Chúc hai bạn trăm năm hạnh phúc!",
       "Chúc mừng hạnh phúc hai bạn!",

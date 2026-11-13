@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 /**
  * PublicPage.jsx — Trang thiệp cưới công khai (port index.html + site.js gốc).
  *
@@ -6,7 +7,7 @@
  * - Navbar: menu dựng từ config.sections (bỏ hero/"Trang chủ"), hamburger mobile,
  *   đổi màu khi cuộn, scrollspy. Hero: slideshow 5s, đếm ngược, ?guest=,
  *   CTA sang rsvp.html, cánh hoa rơi, reveal khi cuộn.
- * - Nhạc nền: nút tròn nổi, tự phát sau tương tác đầu tiên nếu bị chặn autoplay.
+ * - Nhạc nền: mặc định tắt, chỉ phát khi khách bấm nút nhạc.
  * - Cặp đôi (theo couple.order), album masonry + lightbox, sự kiện + modal
  *   "Thêm vào lịch" (Google Calendar / tải .ics), video YouTube (click mới
  *   tạo iframe), mừng cưới (QR ảnh ưu tiên → SVG sinh tại chỗ → ảnh gốc),
@@ -313,7 +314,7 @@ export default function PublicPage() {
     return () => clearInterval(t);
   }, [cfg]);
 
-  // Nhạc nền: thử tự phát, nếu bị chặn thì phát sau tương tác đầu tiên
+  // Chuẩn bị nhạc ở trạng thái tắt; chỉ toggleMusic mới gọi play().
   useEffect(() => {
     if (!cfg || !cfg.music) return undefined;
     const hasMusic = cfg.music.enabled && !!cfg.music.url;
@@ -322,25 +323,9 @@ export default function PublicPage() {
     audio.loop = true;
     audio.volume = typeof cfg.music.volume === 'number' ? cfg.music.volume : 0.5;
     audioRef.current = audio;
-    musicUserPausedRef.current = false;
-    const tryPlay = () => {
-      if (musicUserPausedRef.current || !audioRef.current) return;
-      // play() trả về Promise ở trình duyệt thật; phòng khi môi trường
-      // không hỗ trợ (trả về undefined) thì không làm sập cả trang.
-      const p = audio.play();
-      if (p && typeof p.then === 'function') {
-        p.then(() => {
-          setMusicPlaying(true);
-        }).catch(() => { /* Trình duyệt chặn autoplay — chờ lần bấm nút */ });
-      }
-    };
-    const firstInteraction = () => tryPlay();
-    window.addEventListener('pointerdown', firstInteraction, { once: true });
-    window.addEventListener('keydown', firstInteraction, { once: true });
-    tryPlay();
+    audio.preload = 'none';
+    setMusicPlaying(false);
     return () => {
-      window.removeEventListener('pointerdown', firstInteraction);
-      window.removeEventListener('keydown', firstInteraction);
       audio.pause();
       audioRef.current = null;
       setMusicPlaying(false);
@@ -419,7 +404,7 @@ export default function PublicPage() {
   if (!cfg) {
     return (
       <div id="loading-screen" className="loading" role="status" aria-label="Đang tải thiệp cưới">
-        <div className="loading__monogram" id="loading-monogram">T &amp; T</div>
+        <div className="loading__monogram" id="loading-monogram"><img className="loading__logo" src="/assets/logo.webp" alt="Logo thiệp cưới" /></div>
         <div className="loading__spinner" aria-hidden="true" />
         <p className="loading__text">Đang chuẩn bị thiệp cưới…</p>
       </div>
@@ -517,7 +502,7 @@ export default function PublicPage() {
             <div className="countdown__item"><span className="countdown__num" id="cd-secs">{String(cdSecs).padStart(2, '0')}</span><span className="countdown__label">Giây</span></div>
           </div>
           <p className="countdown__done" id="countdown-done" hidden={!countdownDone}>Hôm nay là ngày cưới! 🎉</p>
-          <a href="rsvp.html" className="btn btn--primary hero__cta" id="hero-cta">{cfg.couple.ctaText}</a>
+          <Link to="/rsvp" className="btn btn--primary hero__cta" id="hero-cta">{cfg.couple.ctaText}</Link>
           {heroImages.length > 1 && cfg.couple.heroSlideshow && (
             <div className="hero__dots" id="hero-dots" role="tablist" aria-label="Chuyển ảnh nền">
               {heroImages.map((_, i) => (
@@ -631,7 +616,7 @@ export default function PublicPage() {
     <div ref={rootRef}>
       {!loadingGone && (
         <div id="loading-screen" className={`loading${loadingHide ? ' loading--hide' : ''}`} role="status" aria-label="Đang tải thiệp cưới">
-          <div className="loading__monogram" id="loading-monogram">{cfg.couple.monogram}</div>
+          <div className="loading__monogram" id="loading-monogram"><img className="loading__logo" src="/assets/logo.webp" alt="Logo thiệp cưới" /></div>
           <div className="loading__spinner" aria-hidden="true" />
           <p className="loading__text">Đang chuẩn bị thiệp cưới…</p>
         </div>
@@ -658,7 +643,7 @@ export default function PublicPage() {
 
       <header id="site-nav" className={`nav${navScrolled ? ' nav--scrolled' : ''}`}>
         <div className="nav__inner container">
-          <a href="#hero" className="nav__logo" id="nav-monogram" aria-label="Về đầu trang">{cfg.couple.monogram}</a>
+          <a href="#hero" className="nav__logo" id="nav-monogram" aria-label="Về đầu trang"><img className="nav__logo-image" src="/assets/logo.webp" alt="Logo thiệp cưới" /></a>
           <nav className="nav__menu-wrap" aria-label="Menu chính">
             <ul id="nav-menu" className={`nav__menu${menuOpen ? ' nav__menu--open' : ''}`}>
               {navItems.map((s) => (
@@ -705,11 +690,6 @@ export default function PublicPage() {
           </p>
           <p className="footer__date" id="footer-date">{fmtDate(cfg.couple.weddingDate)}</p>
           <p className="footer__slogan" id="footer-slogan">{cfg.couple.slogan}</p>
-          <div className="footer__actions">
-            <a href="admin/login.html" className="btn btn--primary footer__admin">
-              <Icon name="grid" size={18} /> Quản trị
-            </a>
-          </div>
         </div>
       </footer>
 

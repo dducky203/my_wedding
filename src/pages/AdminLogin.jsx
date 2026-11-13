@@ -1,16 +1,18 @@
+import { Link, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth, loginAdmin } from '../lib/auth.js';
 import { Icon } from '../lib/icons.jsx';
 
 export default function AdminLogin() {
+  const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => onAuthStateChanged(auth, (user) => {
-    if (user) window.location.replace('index.html');
+    if (user) navigate('/admin', { replace: true });
   }), []);
 
   async function handleLogin(e) {
@@ -24,7 +26,7 @@ export default function AdminLogin() {
     setBusy(true);
     try {
       await loginAdmin(email, password);
-      window.location.replace('index.html');
+      navigate('/admin', { replace: true });
     } catch (err) {
       if (['auth/invalid-credential', 'auth/user-not-found', 'auth/wrong-password'].includes(err.code)) {
         setError('Email hoặc mật khẩu không đúng.');
@@ -84,17 +86,9 @@ export default function AdminLogin() {
           </button>
         </form>
 
-        <p className="login__hint">
-          Tài khoản quản trị được tạo trong Firebase Console, không đăng ký từ trang này.
-        </p>
-
-        <div className="login__note">
-          <Icon name="alert" size={15} /> <strong>Lưu ý bảo mật:</strong> Quyền quản trị
-          được kiểm tra bằng Firebase Authentication và Firestore Rules.
-        </div>
-        <a className="login__back" href="../index.html">
+        <Link className="login__back" to="/">
           <Icon name="arrowLeft" size={14} /> Quay lại xem thiệp
-        </a>
+        </Link>
       </main>
     </div>
   );

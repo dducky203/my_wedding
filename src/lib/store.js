@@ -22,8 +22,54 @@ import {
   setDoc,
   updateDoc,
   where,
+  writeBatch,
 } from 'firebase/firestore';
 import { db } from './firebase.js';
+import { validateWish } from './wishValidation.js';
+
+/** Private Excel import: metadata points to an atomically committed set of chunks. */
+export async function getWeddingGiftList() {
+  const metadata = await getDoc(doc(db, 'adminData', 'weddingGifts'));
+  if (!metadata.exists()) return null;
+  const data = metadata.data();
+  const chunks = await getDocs(collection(db, 'weddingGiftImports', data.importId, 'chunks'));
+  if (chunks.size !== data.chunkCount) throw new Error('Dữ liệu nhập Excel chưa đầy đủ.');
+  const rows = chunks.docs.map((chunk) => chunk.data()).sort((a, b) => a.index - b.index).flatMap((chunk) => JSON.parse(chunk.data));
+  return { ...data, rows };
+}
+
+export async function saveWeddingGiftList({ columns, rows, fileName, sheetName, headerRow }) {
+  if (!rows.length || rows.length > 10000 || !columns.length || columns.length > 100) throw new Error('Danh sách cần có từ 1 đến 10.000 dòng và tối đa 100 cột.');
+  const bytes = (value) => new TextEncoder().encode(value).length;
+  if (bytes(JSON.stringify({ columns, rows })) > 5 * 1024 * 1024) throw new Error('Dữ liệu vượt quá 5 MB. Vui lòng chia nhỏ danh sách.');
+  const metadataRef = doc(db, 'adminData', 'weddingGifts');
+  const previous = await getDoc(metadataRef);
+  const importId = uid('excel');
+  const groups = [];
+  let group = [], size = 2;
+  for (const row of rows) {
+    const rowSize = bytes(JSON.stringify(row)) + 1;
+    if (rowSize > 280000) throw new Error(`Dòng Excel ${row.excelRow} quá lớn.`);
+    if (size + rowSize > 280000) { groups.push(group); group = []; size = 2; }
+    group.push(row); size += rowSize;
+  }
+  if (group.length) groups.push(group);
+  const metadata = { importId, columns, fileName, sheetName, headerRow: Number(headerRow), rowCount: rows.length, chunkCount: groups.length, updatedAt: new Date().toISOString() };
+  if (bytes(JSON.stringify(metadata)) > 800000) throw new Error('Tiêu đề cột quá dài. Vui lòng rút gọn tiêu đề trong Excel.');
+  const batch = writeBatch(db);
+  groups.forEach((rows, index) => batch.set(doc(db, 'weddingGiftImports', importId, 'chunks', String(index)), { index, data: JSON.stringify(rows) }));
+  batch.set(metadataRef, metadata);
+  await batch.commit();
+  if (previous.exists()) {
+    try {
+      const old = await getDocs(collection(db, 'weddingGiftImports', previous.data().importId, 'chunks'));
+      const cleanup = writeBatch(db);
+      old.docs.forEach((item) => cleanup.delete(item.ref));
+      if (old.size) await cleanup.commit();
+    } catch (err) { console.warn('[store] Không dọn được bản nhập Excel cũ:', err); }
+  }
+  return { ...metadata, rows };
+}
 
 // ------------------------------------------------------------------
 // Khoá lưu trữ & phiên bản
@@ -117,6 +163,11 @@ export function migrateConfig(config) {
     if (cfg[key] === undefined) cfg[key] = deepClone(fallback[key]);
   }
   cfg.version = CONFIG_VERSION;
+  cfg.guestbook.moderation = false;
+  cfg.guestbook.thankYou = cfg.guestbook.thankYou?.replace(
+    'Lời chúc của bạn sẽ được hiển thị sau khi được duyệt.',
+    'Lời chúc của bạn đã được hiển thị trên sổ lưu bút.',
+  );
   return cfg;
 }
 
@@ -138,7 +189,7 @@ export async function getConfig() {
   }
 
   try {
-    const url = new URL('../config.json', import.meta.url);
+    const url = `${import.meta.env.BASE_URL}config.json`;
     const res = await fetch(url, { cache: 'no-store' });
     if (res.ok) {
       const parsed = await res.json();
@@ -269,6 +320,8 @@ export async function getWishes(approvedOnly = false) {
 
 /** Thêm một lời chúc mới. `wish` = { name, email?, message, approved? } */
 export async function addWish(wish) {
+  const error = validateWish(wish);
+  if (error) return { ok: false, error };
   const item = {
     name: String(wish.name || 'Khách mời').trim(),
     email: String(wish.email || '').trim(),
@@ -347,13 +400,35 @@ export async function addRsvp(rsvp) {
     message: String(rsvp.message || '').trim(),
     createdAt: new Date().toISOString()
   };
+  let wishId = '';
+  if (item.message) {
+    const validationError = validateWish({ name: item.name, message: item.message });
+    if (validationError) return { ok: false, error: validationError };
+  }
   try {
-    await setDoc(doc(db, 'rsvps', item.phone), item);
-    return { ok: true, rsvp: { id: item.phone, ...item } };
+    const batch = writeBatch(db);
+    const rsvpRef = item.phone
+      ? doc(db, 'rsvps', item.phone)
+      : doc(collection(db, 'rsvps'));
+    batch.set(rsvpRef, item);
+    if (item.message) {
+      const wishRef = doc(collection(db, 'wishes'));
+      wishId = wishRef.id;
+      batch.set(wishRef, {
+        name: item.name,
+        email: '',
+        message: item.message,
+        createdAt: item.createdAt,
+        approved: true,
+        sourceRsvpId: rsvpRef.id,
+      });
+    }
+    await batch.commit();
+    return { ok: true, rsvp: { id: rsvpRef.id, ...item }, wishId };
   } catch (e) {
     console.error('[store] Lưu RSVP thất bại:', e);
     const error = e.code === 'permission-denied'
-      ? 'SĐT này có thể đã xác nhận hoặc Firestore Rules chưa được cài đúng.'
+      ? 'RSVP hoặc lời nhắn bị Firestore Rules từ chối. Hãy publish Rules mới nhất.'
       : e.message || 'Không thể lưu RSVP lên Firebase.';
     return { ok: false, error };
   }

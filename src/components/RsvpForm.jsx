@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 /**
  * RsvpForm.jsx — Form xác nhận tham dự, render động từ config.rsvp
  * (port renderRsvpPage + bindRsvpForm trong site.js gốc).
@@ -13,6 +14,7 @@ import { useEffect, useRef, useState } from 'react';
 import { addRsvp } from '../lib/store.js';
 import { fmtDateShort } from '../lib/utils.js';
 import { Icon } from '../lib/icons.jsx';
+import { containsInappropriateLanguage } from '../lib/wishValidation.js';
 
 const STATUS_LABELS = {
   yes: 'sẽ đến tham dự',
@@ -48,9 +50,14 @@ export default function RsvpForm({ cfg, showToast }) {
   }, []);
 
   const toggleCeremony = (opt) => {
-    setCeremonies((prev) =>
-      prev.includes(opt) ? prev.filter((o) => o !== opt) : [...prev, opt],
+    const isBothCeremonies = (value) => /^ca\s+(hai|2)\s+le$/i.test(
+      value.normalize('NFD').replace(/\p{M}/gu, '').trim(),
     );
+    setCeremonies((prev) => {
+      if (prev.includes(opt)) return prev.filter((o) => o !== opt);
+      if (isBothCeremonies(opt)) return [opt];
+      return [...prev.filter((o) => !isBothCeremonies(o)), opt];
+    });
   };
 
   const handleSubmit = (e) => {
@@ -78,6 +85,10 @@ export default function RsvpForm({ cfg, showToast }) {
     }
     if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
       setError('Email chưa đúng định dạng.');
+      return;
+    }
+    if (cleanMessage && containsInappropriateLanguage(cleanMessage)) {
+      setError('Lời nhắn có từ ngữ không phù hợp. Vui lòng sửa lại trước khi gửi.');
       return;
     }
     if (!Number.isInteger(guestCount) || guestCount < 1 || guestCount > 20) {
@@ -124,7 +135,7 @@ export default function RsvpForm({ cfg, showToast }) {
           ) : null}
           . Chúng mình rất mong được gặp bạn trong ngày vui!
         </p>
-        <a href="index.html" className="btn btn--primary">Quay lại thiệp</a>
+        <Link to="/" className="btn btn--primary">Quay lại thiệp</Link>
       </div>
     );
   }

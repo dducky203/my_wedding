@@ -4,12 +4,12 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function isAdmin() {
       return request.auth != null
-        && request.auth.uid == 'REPLACE_WITH_ADMIN_UID';
+        && request.auth.uid == '4CapJtNESoam772KvWkaNcY51V72';
     }
 
     function validWish() {
       return request.resource.data.keys().hasOnly([
-          'name', 'email', 'message', 'createdAt', 'approved'
+          'name', 'email', 'message', 'createdAt', 'approved', 'sourceRsvpId'
         ])
         && request.resource.data.name is string
         && request.resource.data.name.size() > 0
@@ -20,22 +20,20 @@ service cloud.firestore {
         && request.resource.data.message.size() > 0
         && request.resource.data.message.size() <= 1000
         && request.resource.data.createdAt is string
-        && request.resource.data.approved is bool;
+        && request.resource.data.approved is bool
+        && (!('sourceRsvpId' in request.resource.data.keys())
+          || request.resource.data.sourceRsvpId is string);
     }
 
-    function canSetApproval() {
-      let configPath = /databases/$(database)/documents/site/config;
-      return exists(configPath)
-        && get(configPath).data.guestbook.moderation == false;
-    }
-
-    function validRsvp(phone) {
+    function validRsvp(rsvpId) {
       return request.resource.data.keys().hasOnly([
           'name', 'phone', 'email', 'guests', 'side', 'ceremonies',
           'status', 'message', 'createdAt'
         ])
-        && request.resource.data.phone == phone
-        && request.resource.data.phone.matches('0[0-9]{9}')
+        && request.resource.data.phone is string
+        && (request.resource.data.phone == ''
+          || (request.resource.data.phone == rsvpId
+            && request.resource.data.phone.matches('0[0-9]{9}')))
         && request.resource.data.name is string
         && request.resource.data.name.size() > 0
         && request.resource.data.name.size() <= 100
@@ -58,16 +56,24 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /adminData/weddingGifts {
+      allow read, write: if isAdmin();
+    }
+
+    match /weddingGiftImports/{importId}/chunks/{chunkId} {
+      allow read, write: if isAdmin();
+    }
+
     match /wishes/{wishId} {
       allow get, list: if isAdmin() || resource.data.approved == true;
       allow create: if validWish()
-        && (isAdmin() || request.resource.data.approved == canSetApproval());
+        && (isAdmin() || request.resource.data.approved == true);
       allow update, delete: if isAdmin();
     }
 
-    match /rsvps/{phone} {
+    match /rsvps/{rsvpId} {
       allow get, list: if isAdmin();
-      allow create: if validRsvp(phone);
+      allow create: if validRsvp(rsvpId);
       allow update, delete: if isAdmin();
     }
   }

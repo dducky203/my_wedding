@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom';
 /**
  * AdminDashboard.jsx — Dashboard quản trị thiệp cưới (14 mục).
  * Port từ admin/index.html + js/admin.js gốc sang React 18.
@@ -41,12 +42,13 @@ import {
 } from '../lib/store.js';
 import { auth, changeAdminPassword, logoutAdmin, storageGet, storageSet } from '../lib/auth.js';
 import { onAuthStateChanged } from 'firebase/auth';
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { DEFAULT_CONFIG } from '../lib/defaultConfig.js';
-import { storage } from '../lib/firebase.js';
 import { fmtDateShort, parseYoutubeId } from '../lib/utils.js';
 import { makeGiftQrSvg, isUsableQrImage } from '../lib/qr.js';
 import { Icon } from '../lib/icons.jsx';
+import WeddingGiftList from '../components/WeddingGiftList.jsx';
+import Pagination from '../components/Pagination.jsx';
+import ImageEditor from '../components/ImageEditor.jsx';
 
 // ------------------------------------------------------------------
 // Tiện ích đường dẫn object / ngày giờ / URL / tải file
@@ -133,104 +135,12 @@ function downloadCSV(filename, headers, rows) {
 
 /** URL tuyệt đối của thiệp (../index.html so với trang admin hiện tại). */
 function invitationUrl() {
-  return new URL('../index.html', window.location.href).href;
+  return new URL('/', window.location.href).href;
 }
 
 // ------------------------------------------------------------------
-// Xử lý ảnh: nén phía client + cắt giữa theo tỉ lệ (thay Cropper.js)
+// Giữ ảnh gốc; chỉ cắt khi vị trí hiển thị yêu cầu một tỉ lệ cố định.
 // ------------------------------------------------------------------
-function webpSupported() {
-  try {
-    const c = document.createElement('canvas');
-    return c.toDataURL('image/webp').indexOf('data:image/webp') === 0;
-  } catch {
-    return false;
-  }
-}
-
-/** Đọc file ảnh -> dataURL đã resize (tối đa maxDim px) + nén JPEG 0.8 / WebP. */
-function compressImageFile(file, maxDim = 1600, quality = 0.8) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Không đọc được file ảnh.'));
-    reader.onload = () => {
-      const img = new Image();
-      img.onerror = () => reject(new Error('File không phải ảnh hợp lệ.'));
-      img.onload = () => {
-        let { width, height } = img;
-        const scale = Math.min(1, maxDim / Math.max(width, height));
-        width = Math.max(1, Math.round(width * scale));
-        height = Math.max(1, Math.round(height * scale));
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
-        const mime = webpSupported() ? 'image/webp' : 'image/jpeg';
-        canvas.toBlob(
-          (blob) => {
-            if (!blob) {
-              reject(new Error('Không nén được ảnh.'));
-              return;
-            }
-            const r2 = new FileReader();
-            r2.onload = () => resolve(String(r2.result));
-            r2.onerror = () => reject(new Error('Không đọc được ảnh sau khi nén.'));
-            r2.readAsDataURL(blob);
-          },
-          mime,
-          quality,
-        );
-      };
-      img.src = String(reader.result);
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-/**
- * Cắt giữa ảnh theo đúng tỉ lệ aspect (rộng/cao), trả về dataURL.
- * Thay cho Cropper.js tương tác ở bản gốc: không có khung kéo chọn vùng,
- * hệ thống tự lấy vùng giữa ảnh đúng tỉ lệ yêu cầu (16:9 hero, 1:1 chân dung,
- * 1.91:1 og:image).
- */
-function centerCropDataUrl(dataUrl, aspect) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onerror = () => reject(new Error('Không đọc được ảnh để cắt.'));
-    img.onload = () => {
-      const { width: w, height: h } = img;
-      const current = w / h;
-      let sw = w;
-      let sh = h;
-      if (current > aspect) sw = Math.round(h * aspect);
-      else sh = Math.round(w / aspect);
-      const sx = Math.round((w - sw) / 2);
-      const sy = Math.round((h - sh) / 2);
-      const canvas = document.createElement('canvas');
-      const scale = Math.min(1, 1600 / Math.max(sw, sh));
-      canvas.width = Math.max(1, Math.round(sw * scale));
-      canvas.height = Math.max(1, Math.round(sh * scale));
-      canvas.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-      const mime = webpSupported() ? 'image/webp' : 'image/jpeg';
-      canvas.toBlob(
-        (blob) => {
-          if (!blob) {
-            reject(new Error('Không cắt được ảnh.'));
-            return;
-          }
-          const r2 = new FileReader();
-          r2.onload = () => resolve(String(r2.result));
-          r2.onerror = () => reject(new Error('Không đọc được ảnh sau khi cắt.'));
-          r2.readAsDataURL(blob);
-        },
-        mime,
-        0.85,
-      );
-    };
-    img.src = dataUrl;
-  });
-}
-
 /** Đọc file bất kỳ thành data URL (dùng cho nhạc mp3, ảnh QR). */
 function readFileAsDataUrl(file) {
   return new Promise((resolve, reject) => {
@@ -263,6 +173,7 @@ const SCREEN_TITLES = {
   general: 'Thông tin chung',
   couple: 'Cô dâu & Chú rể',
   gift: 'Mừng cưới',
+  giftList: 'Danh sách mừng cưới',
   album: 'Album ảnh',
   events: 'Sự kiện cưới',
   video: 'Video',
@@ -280,6 +191,7 @@ const MENU = [
   { id: 'general', icon: 'info', label: 'Thông tin chung' },
   { id: 'couple', icon: 'users', label: 'Cô dâu & Chú rể' },
   { id: 'gift', icon: 'gift', label: 'Mừng cưới' },
+  { id: 'giftList', icon: 'gift', label: 'Danh sách mừng cưới' },
   { id: 'album', icon: 'image', label: 'Album ảnh' },
   { id: 'events', icon: 'calendar', label: 'Sự kiện cưới' },
   { id: 'video', icon: 'video', label: 'Video' },
@@ -476,15 +388,24 @@ function moveBefore(list, fromId, toId) {
 // Dashboard chính
 // ------------------------------------------------------------------
 export default function AdminDashboard() {
+  const navigate = useNavigate();
   // Draft trong ref (sửa trực tiếp như bản gốc); `version` kích hoạt render.
   const draftRef = useRef(deepClone(DEFAULT_CONFIG));
   const lastSavedRef = useRef(deepClone(DEFAULT_CONFIG));
   const [version, setVersion] = useState(0);
   const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const pendingImagesRef = useRef(new Map());
+  const [imageEditor, setImageEditor] = useState(null);
+  const imageEditorResolve = useRef(null);
+  useEffect(() => () => { imageEditorResolve.current?.(null); }, []);
+  const pendingDeletesRef = useRef(new Set());
   const dirtyRef = useRef(false);
   const [screen, setScreen] = useState('overview');
   const [authed, setAuthed] = useState(false);
   const [configReady, setConfigReady] = useState(false);
+  const [configLoadError, setConfigLoadError] = useState('');
   const [toasts, setToasts] = useState([]);
   const [wishes, setWishes] = useState([]);
   const [rsvps, setRsvps] = useState([]);
@@ -628,31 +549,74 @@ export default function AdminDashboard() {
 
   /** Lưu draft qua store.saveConfig(). Trả về true nếu lưu được. */
   async function saveNow(showToast = true) {
-    if (!configReady) return false;
+    if (savingRef.current) return false;
+    if (!showToast && getPendingImages(draftRef.current).length) return false;
+    if (!showToast && getRemovedImages(draftRef.current).length) return false;
+    if (!configReady) {
+      toast(configLoadError || 'Đang tải cấu hình Firebase. Vui lòng đợi rồi thử lại.', 'error');
+      return false;
+    }
     const problems = validateDraft();
     setInvalidPaths(computeInvalidPaths());
     if (problems.length) {
       if (showToast) toast('Chưa lưu được: ' + problems[0], 'error');
       return false;
     }
-    const result = await saveConfig(draftRef.current);
+    savingRef.current = true;
+    setSaving(true);
+    const snapshot = deepClone(draftRef.current);
+    const removedImages = getRemovedImages(snapshot);
+    try {
+    for (const pending of getPendingImages(snapshot)) {
+      if (!pending.url) pending.url = await uploadCloudinaryImage(pending);
+    }
+    const result = await saveConfig(resolveImagePreviews(snapshot));
     if (!result.ok) {
       toast('Lưu thất bại: ' + (result.error || 'lỗi không rõ.'), 'error');
       return false;
     }
-    draftRef.current = result.config; // saveConfig đã migrate + chuẩn hoá
     lastSavedRef.current = deepClone(result.config);
-    dirtyRef.current = false;
-    setDirty(false);
+    const changedDuringSave = JSON.stringify(draftRef.current) !== JSON.stringify(snapshot);
+    draftRef.current = changedDuringSave ? resolveImagePreviews(draftRef.current) : result.config;
+    removedImages.forEach((url) => pendingDeletesRef.current.add(url));
+    if (showToast && pendingDeletesRef.current.size) {
+      const usedImages = getCloudinaryImages(draftRef.current);
+      const token = await auth.currentUser.getIdToken();
+      let failed = 0;
+      for (const url of pendingDeletesRef.current) {
+        if (usedImages.has(url)) { pendingDeletesRef.current.delete(url); continue; }
+        try {
+          const response = await fetch('/api/cloudinary/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ url }),
+          });
+          const result = await response.json();
+          if (!response.ok || !result.ok) throw new Error(result.error);
+          pendingDeletesRef.current.delete(url);
+        } catch { failed++; }
+      }
+      if (failed) toast(`Cấu hình đã lưu nhưng ${failed} ảnh chưa xoá khỏi Cloudinary. Bấm Lưu để thử lại.`, 'error');
+    }
+    dirtyRef.current = changedDuringSave;
+    setDirty(changedDuringSave);
     bump();
     if (showToast) toast('Đã lưu thay đổi ✓');
     notifyPreview();
     setStorageTick((t) => t + 1);
     return true;
+    } catch (err) {
+      toast('Lưu thất bại: ' + (err.message || 'Vui lòng thử lại.'), 'error');
+      return false;
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
   }
 
   function handleUndo() {
     draftRef.current = deepClone(lastSavedRef.current);
+    pendingImagesRef.current.clear();
     dirtyRef.current = false;
     setDirty(false);
     setInvalidPaths(new Set());
@@ -664,29 +628,87 @@ export default function AdminDashboard() {
   async function handleLogout() {
     try {
       await logoutAdmin();
-      window.location.replace('login.html');
+      navigate('/admin/login', { replace: true });
     } catch (err) {
       toast(`Đăng xuất thất bại: ${err.message || 'hãy thử lại.'}`, 'error');
     }
   }
 
   // ---------------- Upload ảnh ----------------
-  /** Nén ảnh rồi lưu vào Firebase Storage; config chỉ giữ URL tải xuống. */
-  async function uploadImage(file, { cropAspect = null, maxDim = 1600 } = {}) {
+  function getPendingImages(config) {
+    const pending = new Set();
+    JSON.stringify(config, (_key, value) => {
+      if (typeof value === 'string' && pendingImagesRef.current.has(value)) {
+        pending.add(pendingImagesRef.current.get(value));
+      }
+      return value;
+    });
+    return [...pending];
+  }
+
+  function getCloudinaryImages(config) {
+    const urls = new Set();
+    const prefix = `https://res.cloudinary.com/${import.meta.env.VITE_CLOUDINARY_CLOUD_NAME}/image/upload/`;
+    JSON.stringify(resolveImagePreviews(config), (_key, value) => {
+      if (typeof value === 'string' && value.startsWith(prefix)) urls.add(value);
+      return value;
+    });
+    return urls;
+  }
+
+  function getRemovedImages(config) {
+    const next = getCloudinaryImages(config);
+    return [...getCloudinaryImages(lastSavedRef.current)].filter((url) => !next.has(url));
+  }
+
+  function resolveImagePreviews(config) {
+    return JSON.parse(JSON.stringify(config, (_key, value) =>
+      typeof value === 'string' ? pendingImagesRef.current.get(value)?.url || value : value,
+    ));
+  }
+
+  async function uploadCloudinaryImage({ blob, name }) {
+    const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
+    const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
+    if (!cloudName || !uploadPreset) throw new Error('Thiếu cấu hình Cloudinary trong .env.');
+    const form = new FormData();
+    form.append('file', blob, name);
+    form.append('upload_preset', uploadPreset);
+    const response = await fetch(`https://api.cloudinary.com/v1_1/${encodeURIComponent(cloudName)}/image/upload`, {
+      method: 'POST', body: form,
+    });
+    const result = await response.json();
+    if (!response.ok || !result.secure_url) throw new Error(result.error?.message || 'Cloudinary không tải được ảnh.');
+    return result.secure_url;
+  }
+
+  /** Chỉ chuẩn bị ảnh xem trước; Cloudinary được gọi khi bấm Lưu thay đổi. */
+  async function uploadImage(file, { cropAspect = null } = {}) {
     if (!file || !file.type.startsWith('image/')) {
       toast('Vui lòng chọn file ảnh.', 'error');
       return null;
     }
+    if (file.size > 10 * 1024 * 1024) {
+      toast('Ảnh vượt quá giới hạn 10 MB.', 'error');
+      return null;
+    }
     try {
-      const compressed = await compressImageFile(file, maxDim);
-      const dataUrl = cropAspect
-        ? await centerCropDataUrl(compressed, cropAspect)
-        : compressed;
-      const blob = await (await fetch(dataUrl)).blob();
-      const extension = blob.type === 'image/png' ? 'png' : 'jpg';
-      const imageRef = ref(storage, `wedding/${uid('image')}.${extension}`);
-      await uploadBytes(imageRef, blob, { contentType: blob.type });
-      return await getDownloadURL(imageRef);
+      const original = await readFileAsDataUrl(file);
+      const edited = await new Promise((resolve) => {
+        imageEditorResolve.current = resolve;
+        setImageEditor({ source: original, aspect: cropAspect, resolve });
+      });
+      if (!edited) return null;
+      const dataUrl = edited.original ? original : edited.dataUrl;
+      const blob = edited.original ? file : edited.blob;
+      if (blob.size > 10 * 1024 * 1024) {
+        throw new Error('Ảnh PNG sau khi cắt vượt quá 10 MB. Vui lòng chọn ảnh có dung lượng nhỏ hơn.');
+      }
+      if (!pendingImagesRef.current.has(dataUrl)) {
+        const name = edited.original ? file.name : file.name.replace(/\.[^.]+$/, '') + '.png';
+        pendingImagesRef.current.set(dataUrl, { blob, name, url: '' });
+      }
+      return dataUrl;
     } catch (err) {
       toast(err.message || 'Không xử lý được ảnh.', 'error');
       return null;
@@ -708,7 +730,7 @@ export default function AdminDashboard() {
     }
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) {
-        window.location.replace('login.html');
+        navigate('/admin/login', { replace: true });
         return;
       }
       try {
@@ -717,11 +739,13 @@ export default function AdminDashboard() {
         draftRef.current = config;
         lastSavedRef.current = deepClone(config);
         setConfigReady(true);
+        setConfigLoadError('');
         setAuthed(true);
         await refreshLists();
       } catch (err) {
         if (alive) {
           setAuthed(true);
+          setConfigLoadError(`Không tải được cấu hình Firebase: ${err.message || 'hãy kiểm tra Firestore Rules.'}`);
           toast(`Không tải được cấu hình: ${err.message || 'hãy kiểm tra Firestore Rules.'}`, 'error');
         }
       }
@@ -744,11 +768,13 @@ export default function AdminDashboard() {
 
   // Autosave: 1.5s sau lần sửa cuối cùng.
   useEffect(() => {
-    if (!dirty || !configReady) return undefined;
+    if (!dirty || !configReady || saving) return undefined;
+    if (getPendingImages(draftRef.current).length) return undefined;
+    if (getRemovedImages(draftRef.current).length) return undefined;
     const t = setTimeout(() => { void saveNow(false); }, 1500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dirty, version, configReady]);
+  }, [dirty, version, configReady, saving]);
 
   // Đổi màn hình: về đầu trang + tải lại dữ liệu tươi cho các màn có bảng.
   useEffect(() => {
@@ -1108,7 +1134,7 @@ export default function AdminDashboard() {
         </div>
         <div className="card">
           <h2 className="card__title">Ảnh nền hero</h2>
-          <p className="card__subtitle">Ảnh đầu tiên là ảnh hiển thị đầu. Upload sẽ được nén và cắt giữa tỉ lệ 16:9.</p>
+          <p className="card__subtitle">Ảnh đầu tiên là ảnh hiển thị đầu. Ảnh được cắt giữa theo tỉ lệ 16:9, giữ độ phân giải vùng cắt.</p>
           <div className="hero-list">
             {heroImages.length === 0 && (
               <p className="form__hint">Chưa có ảnh hero nào. Upload hoặc dán URL ảnh ở dưới.</p>
@@ -1158,9 +1184,8 @@ export default function AdminDashboard() {
           </div>
           <div className="card__actions">
             <label className="btn" htmlFor="heroFileInput">
-              <Icon name="upload" size={15} /> Upload ảnh hero
-            </label>
-            <input
+              <Icon name="upload" size={15} /> Chọn &amp; chỉnh ảnh</label>
+            <><input
               type="file"
               id="heroFileInput"
               accept="image/*"
@@ -1170,7 +1195,7 @@ export default function AdminDashboard() {
                 e.target.value = '';
                 if (f) handleHeroFile(f);
               }}
-            />
+            /></>
           </div>
           <div className="form__row" style={{ marginTop: 12 }}>
             <Field label="Hoặc dán URL ảnh">
@@ -1218,7 +1243,7 @@ export default function AdminDashboard() {
   // 3. CÔ DÂU & CHÚ RỂ
   // ==================================================================
   async function handlePersonPhoto(person, file) {
-    const dataUrl = await uploadImage(file, { cropAspect: 1, maxDim: 800 });
+    const dataUrl = await uploadImage(file, { cropAspect: 1 });
     if (!dataUrl) return;
     updateDraft(`couple.${person}.photo`, dataUrl);
     toast('Đã cập nhật ảnh ✓');
@@ -1233,9 +1258,8 @@ export default function AdminDashboard() {
           <img className="avatar-preview" src={person.photo || ''} alt={`Ảnh ${label}`} />
           <div>
             <label className="btn btn--sm" htmlFor={`photoFile-${key}`}>
-              <Icon name="upload" size={14} /> Upload &amp; cắt vuông
-            </label>
-            <input
+              <Icon name="upload" size={14} /> Chọn &amp; chỉnh ảnh</label>
+            <><input
               type="file"
               id={`photoFile-${key}`}
               accept="image/*"
@@ -1245,8 +1269,8 @@ export default function AdminDashboard() {
                 e.target.value = '';
                 if (f) handlePersonPhoto(key, f);
               }}
-            />
-            <p className="form__hint">Ảnh sẽ được cắt giữa thành vuông (1:1) cho khung chân dung.</p>
+            /></>
+            <p className="form__hint">Chọn ảnh và điều chỉnh vùng cắt, tỉ lệ hoặc zoom trước khi áp dụng.</p>
           </div>
         </div>
         <Field label="Họ tên" required>
@@ -1338,8 +1362,8 @@ export default function AdminDashboard() {
       return;
     }
     try {
-      if (!checkStorageBeforeAdd(file.size * 1.4)) return;
-      const dataUrl = await readFileAsDataUrl(file);
+        const dataUrl = await uploadImage(file);
+        if (!dataUrl) return;
       updateDraft(`gift.${person}.qrImage`, dataUrl);
       toast('Đã cập nhật ảnh QR ✓');
     } catch (err) {
@@ -1391,9 +1415,8 @@ export default function AdminDashboard() {
           />
           <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <label className="btn btn--sm" htmlFor={`giftQrFile-${key}`}>
-              <Icon name="upload" size={14} /> Upload ảnh QR
-            </label>
-            <input
+              <Icon name="upload" size={14} /> Chọn &amp; chỉnh ảnh</label>
+            <><input
               type="file"
               id={`giftQrFile-${key}`}
               accept="image/*"
@@ -1403,7 +1426,7 @@ export default function AdminDashboard() {
                 e.target.value = '';
                 if (f) handleGiftQrUpload(key, f);
               }}
-            />
+            /></>
             {person.qrImage && (
               <button className="btn btn--danger btn--sm" type="button" onClick={() => updateDraft(`gift.${key}.qrImage`, '')}>
                 Xoá ảnh QR
@@ -1478,7 +1501,7 @@ export default function AdminDashboard() {
     }
     let added = 0;
     for (const file of list) {
-      const dataUrl = await uploadImage(file, { maxDim: 1600 });
+      const dataUrl = await uploadImage(file);
       if (!dataUrl) continue;
       mutateDraft((d) => {
         d.album.photos = d.album.photos || [];
@@ -1589,9 +1612,9 @@ export default function AdminDashboard() {
               <strong>Kéo thả ảnh vào đây</strong> hoặc bấm để chọn nhiều ảnh cùng lúc
             </div>
             <div style={{ fontSize: 12.5, marginTop: 4 }}>
-              Ảnh được nén phía client (tối đa 1600px, JPEG 0.8 / WebP nếu hỗ trợ) trước khi lưu.
+              Ảnh giữ nguyên định dạng và độ phân giải gốc, tối đa 10 MB mỗi ảnh. Bấm Lưu thay đổi để tải ảnh lên.
             </div>
-            <input
+            <><input
               type="file"
               id="albumFileInput"
               accept="image/*"
@@ -1601,7 +1624,7 @@ export default function AdminDashboard() {
                 addAlbumFiles(e.target.files);
                 e.target.value = '';
               }}
-            />
+            /></>
           </div>
           <div style={{ marginTop: 14 }}>
             <Field label="Hoặc dán URL ảnh (thêm từ CDN)">
@@ -1980,9 +2003,8 @@ export default function AdminDashboard() {
             />
             <div style={{ marginTop: 8 }}>
               <label className="btn btn--sm" htmlFor="eventImageFile">
-                <Icon name="upload" size={14} /> Upload ảnh
-              </label>
-              <input
+                <Icon name="upload" size={14} /> Chọn &amp; chỉnh ảnh</label>
+              <><input
                 type="file"
                 id="eventImageFile"
                 accept="image/*"
@@ -1991,10 +2013,10 @@ export default function AdminDashboard() {
                   const f = e.target.files[0];
                   e.target.value = '';
                   if (!f) return;
-                  const dataUrl = await uploadImage(f, { maxDim: 1200 });
+                  const dataUrl = await uploadImage(f);
                   if (dataUrl) set({ image: dataUrl });
                 }}
-              />
+              /></>
             </div>
           </Field>
           <Field label="Ghi chú">
@@ -2593,7 +2615,7 @@ export default function AdminDashboard() {
                 {wishPageItems.length === 0 && (
                   <tr>
                     <td colSpan="6" style={{ textAlign: 'center', color: 'var(--admin-text-2)' }}>
-                      Không có lời chúc nào khớp điều kiện.
+                      Chưa có lời chúc nào.
                     </td>
                   </tr>
                 )}
@@ -2652,25 +2674,7 @@ export default function AdminDashboard() {
               </tbody>
             </table>
           </div>
-          <div className="pagination">
-            <button
-              className="btn btn--sm"
-              type="button"
-              onClick={() => setWishState((prev) => ({ ...prev, page: Math.max(1, prev.page - 1) }))}
-            >
-              ← Trước
-            </button>
-            <span>
-              Trang {wishPage}/{wishPages} — {filteredWishesList.length} lời chúc
-            </span>
-            <button
-              className="btn btn--sm"
-              type="button"
-              onClick={() => setWishState((prev) => ({ ...prev, page: Math.min(wishPages, prev.page + 1) }))}
-            >
-              Sau →
-            </button>
-          </div>
+          <Pagination page={wishPage} pageSize={wishState.perPage} total={filteredWishesList.length} label="lời chúc" onPageChange={(page) => setWishState((prev) => ({ ...prev, page }))} />
         </div>
         <div className="card">
           <h2 className="card__title">Cấu hình sổ lưu bút</h2>
@@ -2680,13 +2684,7 @@ export default function AdminDashboard() {
             onChange={(v) => updateDraft('guestbook.enabled', v)}
             ariaLabel="Bật sổ lưu bút"
           />
-          <Switch
-            label="Kiểm duyệt trước khi hiển thị"
-            desc="Bật: lời chúc mới phải được duyệt ở đây mới hiện trên thiệp."
-            checked={draft.guestbook.moderation}
-            onChange={(v) => updateDraft('guestbook.moderation', v)}
-            ariaLabel="Bật kiểm duyệt"
-          />
+          <p className="form__hint">Lời chúc mới tự động hiển thị sau khi qua bộ lọc từ ngữ. Bạn vẫn có thể ẩn hoặc xoá lời chúc tại đây.</p>
           <div style={{ marginTop: 14 }}>
             <Field label="Tiêu đề sổ lưu bút">
               <input
@@ -2990,25 +2988,7 @@ export default function AdminDashboard() {
               </tbody>
             </table>
           </div>
-          <div className="pagination">
-            <button
-              className="btn btn--sm"
-              type="button"
-              onClick={() => setRsvpState((prev) => ({ ...prev, page: Math.max(1, prev.page - 1) }))}
-            >
-              ← Trước
-            </button>
-            <span>
-              Trang {rsvpPage}/{rsvpPages} — {filteredRsvpsList.length} khách
-            </span>
-            <button
-              className="btn btn--sm"
-              type="button"
-              onClick={() => setRsvpState((prev) => ({ ...prev, page: Math.min(rsvpPages, prev.page + 1) }))}
-            >
-              Sau →
-            </button>
-          </div>
+          <Pagination page={rsvpPage} pageSize={rsvpState.perPage} total={filteredRsvpsList.length} label="khách" onPageChange={(page) => setRsvpState((prev) => ({ ...prev, page }))} />
         </div>
         <div className="card">
           <h2 className="card__title">Cấu hình form RSVP</h2>
@@ -3195,9 +3175,8 @@ export default function AdminDashboard() {
             )}
             <div className="card__actions" style={{ marginTop: 0 }}>
               <label className="btn btn--sm" htmlFor="ogFileInput">
-                <Icon name="upload" size={14} /> Upload &amp; cắt 1.91:1
-              </label>
-              <input
+                <Icon name="upload" size={14} /> Chọn &amp; chỉnh ảnh</label>
+              <><input
                 type="file"
                 id="ogFileInput"
                 accept="image/*"
@@ -3211,7 +3190,7 @@ export default function AdminDashboard() {
                   updateDraft('site.ogImage', dataUrl);
                   toast('Đã cập nhật ảnh chia sẻ ✓');
                 }}
-              />
+              /></>
             </div>
             <input
               className={`form__input${invalid('site.ogImage')}`}
@@ -3239,9 +3218,8 @@ export default function AdminDashboard() {
                 )}
               </span>
               <label className="btn btn--sm" htmlFor="faviconFileInput">
-                <Icon name="upload" size={14} /> Upload ảnh favicon
-              </label>
-              <input
+                <Icon name="upload" size={14} /> Chọn &amp; chỉnh ảnh</label>
+              <><input
                 type="file"
                 id="faviconFileInput"
                 accept="image/*"
@@ -3250,12 +3228,12 @@ export default function AdminDashboard() {
                   const f = e.target.files[0];
                   e.target.value = '';
                   if (!f) return;
-                  const dataUrl = await uploadImage(f, { maxDim: 256 });
+                  const dataUrl = await uploadImage(f);
                   if (!dataUrl) return;
                   updateDraft('site.favicon', dataUrl);
                   toast('Đã cập nhật favicon ✓');
                 }}
-              />
+              /></>
             </div>
           </Field>
         </div>
@@ -3274,7 +3252,7 @@ export default function AdminDashboard() {
             <button className="btn" type="button" onClick={() => copyText(invitationUrl(), 'Đã sao chép link thiệp ✓')}>
               <Icon name="copy" size={15} /> Sao chép link thiệp
             </button>
-            <a className="btn" href="../index.html" target="_blank" rel="noopener">
+            <a className="btn" href="/" target="_blank" rel="noopener">
               Mở thiệp
             </a>
           </div>
@@ -3688,6 +3666,13 @@ export default function AdminDashboard() {
 
   return (
     <div className="admin">
+      {imageEditor && <ImageEditor {...imageEditor} onDone={(result) => {
+        if (imageEditorResolve.current !== imageEditor.resolve) return;
+        const resolve = imageEditorResolve.current;
+        imageEditorResolve.current = null;
+        setImageEditor(null);
+        resolve?.(result);
+      }} />}
       <div
         className={`sidebar__backdrop${sidebarOpen ? ' is-show' : ''}`}
         onClick={() => setSidebarOpen(false)}
@@ -3729,16 +3714,17 @@ export default function AdminDashboard() {
         <div className="topbar__title">{SCREEN_TITLES[screen] || 'Quản trị'}</div>
         <div className="topbar__save-status">
           <span className={`topbar__dot${dirty ? ' is-dirty' : ''}`} />
-          <span>{dirty ? 'Chưa lưu thay đổi' : 'Đã lưu ✓'}</span>
+          <span role="status" title={configLoadError || undefined}>{saving ? 'Đang lưu…' : !configReady ? (configLoadError ? 'Lỗi tải cấu hình' : 'Đang tải cấu hình…') : getPendingImages(draftRef.current).length ? 'Ảnh đang xem trước — bấm Lưu thay đổi' : dirty ? 'Chưa lưu thay đổi' : 'Đã lưu ✓'}</span>
         </div>
-        <button className="btn btn--sm" type="button" onClick={handleUndo} title="Khôi phục về bản đã lưu gần nhất">
+        <button className="btn btn--sm" type="button" onClick={handleUndo} disabled={saving} title="Khôi phục về bản đã lưu gần nhất">
           <Icon name="undo" size={14} /> Hoàn tác
         </button>
-        <a className="btn btn--sm" href="../index.html" target="_blank" rel="noopener">
+        <a className="btn btn--sm" href="/" target="_blank" rel="noopener">
           <Icon name="eye" size={14} /> Xem thiệp
         </a>
-        <button className="btn btn--primary btn--sm" type="button" onClick={() => saveNow(true)}>
-          <Icon name="save" size={14} /> Lưu thay đổi
+        <button className="btn btn--primary btn--sm" type="button" onClick={() => saveNow(true)} disabled={saving} aria-busy={saving}>
+          {saving ? <span className="save-spinner" aria-hidden="true" /> : <Icon name="save" size={14} />}
+          {saving ? 'Đang lưu…' : 'Lưu thay đổi'}
         </button>
       </header>
 
@@ -3750,6 +3736,7 @@ export default function AdminDashboard() {
               {screen === 'general' && renderGeneral()}
               {screen === 'couple' && renderCouple()}
               {screen === 'gift' && renderGift()}
+              <div style={{ display: screen === 'giftList' ? 'block' : 'none' }}><WeddingGiftList /></div>
               {screen === 'album' && renderAlbum()}
               {screen === 'events' && renderEvents()}
               {screen === 'video' && renderVideo()}
@@ -3798,7 +3785,7 @@ export default function AdminDashboard() {
                   key={previewKey}
                   ref={previewFrameRef}
                   className={frameClass}
-                  src="../index.html"
+                  src="/"
                   title="Xem trước thiệp cưới"
                 />
               </div>
