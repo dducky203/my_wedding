@@ -1,15 +1,15 @@
-// Match whole words/phrases so ordinary names and greetings stay valid.
-const BLOCKED_PHRASES = [
-  'chia tay', 'tan nát', 'ngoại tình',
-  'chết', 'die', 'tai nạn', 'phò', 'đĩ', 'cave', 'bú',
-  'địt', 'đụ', 'đéo', 'đếch', 'lồn', 'cặc', 'buồi',
-  'đụ má', 'đụ mẹ', 'địt mẹ', 'địt má', 'con đĩ', 'chó đẻ',
-  'đồ ngu', 'óc chó', 'súc vật', 'khốn nạn', 'mất dạy',
-  'vcl', 'vl', 'vkl', 'đm', 'đmm', 'dcm', 'dm', 'dkm', 'cl',
-  'fuck', 'fucking', 'shit', 'bitch', 'asshole',
-];
+import blockedPhrases from '../data/wishBlockedPhrases.json' with { type: 'json' };
 
-function normalizeText(value) {
+function normalizeKeepAccents(value) {
+  return String(value ?? '')
+    .normalize('NFC')
+    .toLowerCase()
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+}
+
+function normalizeRemoveAccents(value) {
   return String(value ?? '')
     .toLowerCase()
     .normalize('NFD')
@@ -20,18 +20,27 @@ function normalizeText(value) {
     .trim();
 }
 
-// Permit punctuation between letters, e.g. "v.c.l" or "f*u*c*k".
-const blockedPatterns = BLOCKED_PHRASES.map((phrase) => {
-  const letters = normalizeText(phrase).replace(/ /g, '');
-  return new RegExp(`(?:^| )${letters.split('').join(' *')}(?= |$)`);
-});
+// Allow punctuation between letters, e.g. v.c.l.
+function buildPattern(cleanPhrase) {
+  const compact = cleanPhrase.replace(/ /g, '');
+  const chars = Array.from(compact).map((ch) =>
+    ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  );
+  return new RegExp(`(?:^| )${chars.join(' *')}(?= |$)`, 'u');
+}
+
+const exactPatterns = blockedPhrases.exactAccentPhrases.map((phrase) =>
+  buildPattern(normalizeKeepAccents(phrase))
+);
+const normalizedPatterns = blockedPhrases.normalizedPhrases.map((phrase) =>
+  buildPattern(normalizeRemoveAccents(phrase))
+);
 
 export function containsInappropriateLanguage(value) {
-  // Preserve the ordinary verb "đi" before removing accents ("đĩ" also folds to "di").
-  const text = String(value ?? '').normalize('NFC').toLowerCase()
-    .replace(/(^|[^\p{L}\p{N}])đi(?=$|[^\p{L}\p{N}])/gu, '$1allowedword');
-  const normalized = normalizeText(text);
-  return blockedPatterns.some((pattern) => pattern.test(normalized));
+  const keepAccentsText = normalizeKeepAccents(value);
+  if (exactPatterns.some((pattern) => pattern.test(keepAccentsText))) return true;
+  const noAccentsText = normalizeRemoveAccents(value);
+  return normalizedPatterns.some((pattern) => pattern.test(noAccentsText));
 }
 
 export function validateWish({ name, email = '', message }) {
