@@ -29,8 +29,11 @@ function buildPattern(cleanPhrase) {
   return new RegExp(`(?:^| )${chars.join(' *')}(?= |$)`, 'u');
 }
 
-const exactPatterns = blockedPhrases.exactAccentPhrases.map((phrase) =>
-  buildPattern(normalizeKeepAccents(phrase))
+// Match both spellings against text that still retains its accents:
+// "lon" is blocked, but "lớn" must not become "lon" in this branch.
+const exactPatterns = blockedPhrases.exactAccentPhrases.flatMap((phrase) =>
+  [...new Set([normalizeKeepAccents(phrase), normalizeRemoveAccents(phrase)])]
+    .map(buildPattern)
 );
 const normalizedPatterns = blockedPhrases.normalizedPhrases.map((phrase) =>
   buildPattern(normalizeRemoveAccents(phrase))
